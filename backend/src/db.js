@@ -162,6 +162,65 @@ CREATE INDEX IF NOT EXISTS ota_events_node_ts ON ota_events(node_id, ts DESC);
 
 ALTER TABLE nodes ADD COLUMN IF NOT EXISTS pending_op JSONB;
 ALTER TABLE nodes ADD COLUMN IF NOT EXISTS pending_op_at TIMESTAMPTZ;
+
+DO $$ BEGIN
+  CREATE TYPE user_role AS ENUM (
+    'SUPER_ADMIN','FACTORY_ADMIN','LINE_SUPERVISOR','ADMIN_OPERATOR','AUDITOR','CONTRACTOR'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS contractors (
+  id SERIAL PRIMARY KEY,
+  code TEXT UNIQUE,
+  name TEXT NOT NULL,
+  rate_per_piece NUMERIC(10,2),
+  active BOOLEAN DEFAULT true
+);
+
+CREATE TABLE IF NOT EXISTS garment_models (
+  id SERIAL PRIMARY KEY,
+  style TEXT NOT NULL,
+  sam NUMERIC(8,3),
+  ops_count INT
+);
+
+CREATE TABLE IF NOT EXISTS sizes (
+  code SMALLINT PRIMARY KEY,
+  label TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS alerts (
+  id SERIAL PRIMARY KEY,
+  type TEXT NOT NULL,
+  line_id INT,
+  node_id VARCHAR(64),
+  severity TEXT,
+  detail TEXT,
+  raised_at TIMESTAMPTZ DEFAULT NOW(),
+  acknowledged_by INT,
+  acknowledged_at TIMESTAMPTZ,
+  resolved_at TIMESTAMPTZ,
+  dedup_key TEXT UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  email TEXT UNIQUE,
+  name TEXT,
+  password_hash TEXT,
+  role user_role NOT NULL,
+  factory_id INT,
+  line_ids INT[]
+);
+
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS
+  primary_count INT GENERATED ALWAYS AS (count_pass) STORED;
+
+ALTER TABLE bundles ADD COLUMN IF NOT EXISTS contractor_id INT REFERENCES contractors(id);
+ALTER TABLE bundles ADD COLUMN IF NOT EXISTS garment_model_id INT REFERENCES garment_models(id);
+ALTER TABLE bundles ADD COLUMN IF NOT EXISTS size_code SMALLINT REFERENCES sizes(code);
+ALTER TABLE bundles ADD COLUMN IF NOT EXISTS pickup_at TIMESTAMPTZ;
+ALTER TABLE bundles ADD COLUMN IF NOT EXISTS issued_by INT;
 `;
 
 async function initDb() {
@@ -177,6 +236,22 @@ async function initDb() {
       [f.rows[0].id]
     );
   }
+
+  await pool.query(`
+    INSERT INTO sizes (code, label) VALUES
+      (1,'XS'),(2,'S'),(3,'M'),(4,'L'),(5,'XL'),(6,'XXL')
+    ON CONFLICT DO NOTHING
+  `);
+
+  await pool.query(`
+    INSERT INTO contractors (code, name) VALUES ('DEFAULT','Default Contractor')
+    ON CONFLICT DO NOTHING
+  `);
+
+  await pool.query(`
+    INSERT INTO garment_models (style, sam, ops_count) VALUES ('Basic Shirt', 15.5, 12)
+    ON CONFLICT DO NOTHING
+  `);
 }
 
 async function query(text, params) {

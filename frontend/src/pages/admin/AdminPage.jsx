@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import NodesTab from './NodesTab.jsx'
 import OtaTab from './OtaTab.jsx'
+import BundlesTab from './BundlesTab.jsx'
+import AlertsTab from './AlertsTab.jsx'
 import './admin.css'
 
 export const API_BASE = '/api'
@@ -23,22 +25,18 @@ export default function AdminPage() {
         <Link to="/" className="admin-back">← Factory Pilot</Link>
         <h1>Admin</h1>
         <nav className="admin-tabs">
-          <button
-            className={tab === 'nodes' ? 'tab active' : 'tab'}
-            onClick={() => setTab('nodes')}
-          >
-            Nodes
-          </button>
-          <button
-            className={tab === 'ota' ? 'tab active' : 'tab'}
-            onClick={() => setTab('ota')}
-          >
-            OTA
-          </button>
+          {[['nodes','Nodes'],['bundles','Bundles'],['ota','OTA'],['alerts','Alerts']].map(([k,label]) => (
+            <button key={k} className={tab === k ? 'tab active' : 'tab'} onClick={() => setTab(k)}>
+              {label}
+            </button>
+          ))}
         </nav>
       </header>
       <main className="admin-main">
-        {tab === 'nodes' ? <NodesTab /> : <OtaTab />}
+        {tab === 'nodes' && <NodesTab />}
+        {tab === 'bundles' && <BundlesTab />}
+        {tab === 'ota' && <OtaTab />}
+        {tab === 'alerts' && <AlertsTab />}
       </main>
     </div>
   )

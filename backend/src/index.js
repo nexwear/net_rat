@@ -8,6 +8,7 @@ const statusRoutes = require('./routes/status');
 const otaRoutes = require('./routes/ota');
 const adminRoutes = require('./routes/admin');
 const { ensureFirmwareDir } = require('./services/ota');
+const offlineWatcher = require('./services/offlineWatcher');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -47,6 +48,8 @@ async function start() {
     if (process.env.AUTO_APPROVE_DEVICES === 'true') {
       console.log('AUTO_APPROVE_DEVICES enabled — new claims activate immediately');
     }
+    offlineWatcher.start();
+    console.log('Offline watcher started (30s interval)');
   });
 }
 

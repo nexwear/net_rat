@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { query } = require('../db');
+const { raiseAlert } = require('./alerts');
 
 function makeToken(prefix = 'tok') {
   return `${prefix}_${crypto.randomBytes(24).toString('hex')}`;
@@ -149,6 +150,39 @@ function parseTs(ts, tsValid) {
   return Number.isNaN(d.getTime()) ? new Date() : d;
 }
 
+async function runYieldChecks({ count_pass: pass, count_cycle: cycle, node_id: nodeId, module_type: moduleType }, bundleId) {
+  if (!bundleId) return;
+  const { rows } = await query('SELECT declared_pieces, line_id FROM bundles WHERE id = $1', [bundleId]);
+  if (!rows[0]) return;
+  const { declared_pieces: declared, line_id: lineId } = rows[0];
+
+  // DISCREPANCY: > 20% loss vs declared
+  if (declared > 0 && pass < declared * 0.8) {
+    await raiseAlert('DISCREPANCY', {
+      lineId,
+      nodeId,
+      detail: `${moduleType}: ${pass} counted vs ${declared} declared (${Math.round((1 - pass / declared) * 100)}% loss)`,
+      dedupKey: `discrepancy:${bundleId}:${moduleType}`,
+      severity: 'MED',
+    });
+  }
+
+  // SENSOR_DISAGREE: |pass - cycle| / max > 30%
+  if (pass > 0 && cycle > 0) {
+    const diff = Math.abs(pass - cycle);
+    const maxC = Math.max(pass, cycle);
+    if (diff / maxC > 0.3) {
+      await raiseAlert('SENSOR_DISAGREE', {
+        lineId,
+        nodeId,
+        detail: `${moduleType}: pass=${pass}, cycle=${cycle} (${Math.round((diff / maxC) * 100)}% disagree)`,
+        dedupKey: `sensor_disagree:${bundleId}:${moduleType}`,
+        severity: 'MED',
+      });
+    }
+  }
+}
+
 async function ingestScan(node, body) {
   const { eventId, seq, kind, cardUid, ts, tsValid } = body;
   await checkSeq(node.id, seq);
@@ -166,6 +200,18 @@ async function ingestScan(node, body) {
      VALUES ($1, $2, $3::module_type, $4, $5, $6::scan_kind, $7)`,
     [eventId, node.id, node.module_type, cardUid, bundleId, kind, when]
   );
+
+  // UNASSIGNED_CARD alert when card taps with no bundle mapping
+  if (kind === 'TAP_IN' && !bundleId && cardUid) {
+    const { rows: line } = await query('SELECT line_id FROM nodes WHERE id = $1', [node.id]);
+    await raiseAlert('UNASSIGNED_CARD', {
+      lineId: line[0]?.line_id,
+      nodeId: node.id,
+      detail: `Card ${cardUid} has no bundle mapping`,
+      dedupKey: `unassigned:${cardUid}`,
+      severity: 'LOW',
+    });
+  }
 
   let sessionId;
   if (kind === 'TAP_IN' && bundleId) {
@@ -233,6 +279,11 @@ async function ingestSession(node, body) {
       ]
     );
 
+    await runYieldChecks(
+      { count_pass: pass, count_cycle: cycle, node_id: node.id, module_type: node.module_type },
+      bundleId
+    );
+
     if (node.module_type === 'OUTPUT_2' && bundleId) {
       await query("UPDATE bundles SET status = 'COMPLETED', card_uid = NULL WHERE id = $1", [
         bundleId,
@@ -295,6 +346,18 @@ async function ingestHeartbeat(node, body) {
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [node.id, rssi, uptime, fwVersion, queueDepth, flags ? JSON.stringify(flags) : null]
   );
+
+  // QUEUE_OVERFLOW alert from heartbeat overflow flag
+  if (flags?.overflow) {
+    const { rows: n } = await query('SELECT line_id FROM nodes WHERE id = $1', [node.id]);
+    await raiseAlert('QUEUE_OVERFLOW', {
+      lineId: n[0]?.line_id,
+      nodeId: node.id,
+      detail: `Offline queue overflowed — oldest events may be lost`,
+      dedupKey: `queue_overflow:${node.id}`,
+      severity: 'LOW',
+    });
+  }
 
   const { rows } = await query('SELECT pending_op FROM nodes WHERE id = $1', [node.id]);
   const pendingOp = rows[0]?.pending_op ?? null;
