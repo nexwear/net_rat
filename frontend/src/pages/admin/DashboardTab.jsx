@@ -63,21 +63,23 @@ function KpiCard({ title, value, sub, color, accent }) {
     <div style={{
       background: 'var(--surface)',
       border: '1px solid var(--border)',
-      borderRadius: 10,
-      padding: '16px 20px',
+      borderRadius: 'var(--radius-lg)',
+      padding: '18px 20px',
       display: 'flex',
       flexDirection: 'column',
-      gap: 4,
+      gap: 5,
       borderTop: accent ? `3px solid ${accent}` : undefined,
       flex: '1 1 160px',
+      boxShadow: 'var(--shadow-xs)',
+      transition: 'box-shadow var(--t)',
     }}>
-      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
         {title}
       </span>
-      <span style={{ fontSize: 30, fontWeight: 800, color: color || 'var(--text)', letterSpacing: '-0.03em', lineHeight: 1.15 }}>
+      <span style={{ fontSize: 32, fontWeight: 800, color: color || 'var(--text)', letterSpacing: '-0.04em', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>
         {value ?? '—'}
       </span>
-      {sub && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{sub}</span>}
+      {sub && <span style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.4 }}>{sub}</span>}
     </div>
   )
 }
@@ -100,12 +102,13 @@ function SummaryPanel({ title, children }) {
     <div style={{
       background: 'var(--surface)',
       border: '1px solid var(--border)',
-      borderRadius: 10,
+      borderRadius: 'var(--radius-lg)',
       padding: '16px 20px',
       flex: '1 1 260px',
       minWidth: 220,
+      boxShadow: 'var(--shadow-xs)',
     }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 12 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 12 }}>
         {title}
       </div>
       {children}
@@ -115,10 +118,10 @@ function SummaryPanel({ title, children }) {
 
 function StatRow({ label, value, valueColor, dot }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border-dim)' }}>
-      {dot && <span style={{ color: dot, fontSize: 9, lineHeight: 1 }}>●</span>}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border-dim)' }}>
+      {dot && <span style={{ color: dot, fontSize: 8, lineHeight: 1, flexShrink: 0 }}>●</span>}
       <span style={{ flex: 1, color: 'var(--text-2)', fontSize: 13 }}>{label}</span>
-      <span style={{ fontWeight: 700, fontSize: 14, color: valueColor || 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+      <span style={{ fontWeight: 700, fontSize: 15, color: valueColor || 'var(--text)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>
         {value}
       </span>
     </div>
@@ -318,7 +321,7 @@ function NodeTile({ node }) {
     <div style={{
       border: `1px solid var(--border)`,
       borderLeft: `3px solid ${dot}`,
-      borderRadius: 8,
+      borderRadius: 'var(--radius-lg)',
       padding: '12px 14px',
       minWidth: 180,
       maxWidth: 240,
@@ -327,6 +330,8 @@ function NodeTile({ node }) {
       display: 'flex',
       flexDirection: 'column',
       gap: 8,
+      boxShadow: 'var(--shadow-xs)',
+      transition: 'box-shadow var(--t)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{
@@ -418,9 +423,10 @@ function LineCard({ line }) {
     <div style={{
       background: 'var(--surface)',
       border: '1px solid var(--border)',
-      borderRadius: 10,
+      borderRadius: 'var(--radius-lg)',
       padding: '16px 20px',
       marginBottom: 14,
+      boxShadow: 'var(--shadow-xs)',
     }}>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14,
