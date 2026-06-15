@@ -21,6 +21,23 @@ New-Item -ItemType Directory -Force -Path $destDir | Out-Null
 Copy-Item $resolvedBin $destPath -Force
 Write-Host "Copied to $destPath"
 
+$apiBase = $ApiBase.TrimEnd('/')
+$isRemote = $apiBase -notmatch 'localhost|127\.0\.0\.1'
+
+if ($isRemote) {
+  Write-Host "Uploading $destName to $apiBase ..."
+  $bytes = [System.IO.File]::ReadAllBytes($destPath)
+  $uploadUri = "$apiBase/v1/admin/ota/firmware/$destName"
+  try {
+    Invoke-RestMethod -Method PUT -Uri $uploadUri `
+      -ContentType "application/octet-stream" -Body $bytes | Out-Null
+    Write-Host "Uploaded $($bytes.Length) bytes"
+  } catch {
+    Write-Error "Firmware upload failed: $_"
+    exit 1
+  }
+}
+
 $body = @{
   version    = $Version
   rolloutPct = $RolloutPct
@@ -31,7 +48,7 @@ if ($ModuleType) {
 }
 
 $json = $body | ConvertTo-Json
-$result = Invoke-RestMethod -Method POST -Uri "$ApiBase/v1/admin/ota/releases" `
+$result = Invoke-RestMethod -Method POST -Uri "$apiBase/v1/admin/ota/releases" `
   -ContentType "application/json" -Body $json
 
 Write-Host "Registered release:"

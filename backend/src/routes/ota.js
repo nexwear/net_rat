@@ -1,6 +1,8 @@
 const express = require('express');
+const fs = require('fs');
 const path = require('path');
 const { findNodeByToken } = require('../services/devices');
+const { FIRMWARE_DIR } = require('../services/ota');
 const {
   checkUpdate,
   reportUpdate,
@@ -60,6 +62,27 @@ router.get('/admin/ota/releases', async (_req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+router.put(
+  '/admin/ota/firmware/:fileName',
+  express.raw({ type: 'application/octet-stream', limit: '2mb' }),
+  (req, res) => {
+    try {
+      ensureFirmwareDir();
+      const safe = path.basename(req.params.fileName);
+      if (!safe.endsWith('.bin')) {
+        return res.status(400).json({ error: 'fileName must end with .bin' });
+      }
+      if (!req.body || req.body.length === 0) {
+        return res.status(400).json({ error: 'empty firmware body' });
+      }
+      fs.writeFileSync(path.join(FIRMWARE_DIR, safe), req.body);
+      res.json({ ok: true, fileName: safe, bytes: req.body.length });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
 
 router.post('/admin/ota/releases', async (req, res) => {
   try {
