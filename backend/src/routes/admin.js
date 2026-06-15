@@ -76,10 +76,17 @@ router.post('/nodes/:nodeId/reconfig', requirePerm('nodes.config'), async (req, 
     if (type === 'SET_MODULE_TYPE') op.moduleType = moduleType;
     if (type === 'SET_WIFI') op.wifi = wifi.map((w) => ({ s: w.ssid, p: w.pass || '' }));
 
+    const sets = ['pending_op = $1', 'pending_op_at = NOW()'];
+    const params = [JSON.stringify(op), req.params.nodeId];
+    if (type === 'SET_MODULE_TYPE') {
+      sets.push(`module_type = $3::module_type`);
+      params.push(moduleType);
+    }
+
     const { rows } = await query(
-      `UPDATE nodes SET pending_op = $1, pending_op_at = NOW()
-       WHERE id = $2 RETURNING id, pending_op, pending_op_at`,
-      [JSON.stringify(op), req.params.nodeId]
+      `UPDATE nodes SET ${sets.join(', ')}
+       WHERE id = $2 RETURNING id, module_type, pending_op, pending_op_at`,
+      params
     );
 
     if (rows.length === 0) {

@@ -557,6 +557,68 @@ function EditModal({ card, onClose, onDone }) {
   )
 }
 
+export function AdminReaderBanner() {
+  const [info, setInfo] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function check() {
+      try {
+        const res = await fetch(`${API_BASE}/v1/admin/nodes`, { headers: adminHeaders() })
+        const nodes = await res.json()
+        if (!Array.isArray(nodes) || cancelled) return
+
+        const fresh = (n) => n.last_seen_at && (Date.now() - new Date(n.last_seen_at)) < 120000
+        const adminOnline = nodes.filter((n) => n.module_type === 'ADMIN' && n.status === 'ACTIVE' && fresh(n))
+        if (adminOnline.length > 0) {
+          setInfo({ ok: true, label: adminOnline[0].label || adminOnline[0].id })
+          return
+        }
+
+        const inputTapping = nodes.filter((n) => n.module_type === 'INPUT' && n.status === 'ACTIVE' && fresh(n))
+        if (inputTapping.length > 0) {
+          const n = inputTapping[0]
+          setInfo({
+            ok: false,
+            message: `Reader "${n.label || n.id}" is registered as INPUT, not ADMIN. Open Nodes → Reconfig → set Module Type to ADMIN, then reboot the device.`,
+          })
+          return
+        }
+
+        setInfo({
+          ok: false,
+          message: 'No admin NFC reader online. Check WiFi and that the node is approved as ADMIN in the Nodes tab.',
+        })
+      } catch (e) {
+        if (!cancelled) setInfo({ ok: false, message: e.message })
+      }
+    }
+
+    check()
+    const id = setInterval(check, 10000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [])
+
+  if (!info) return null
+
+  return (
+    <div style={{
+      marginBottom: 12, padding: '10px 14px', borderRadius: 8, fontSize: 12, lineHeight: 1.5,
+      background: info.ok ? 'rgba(34,197,94,0.08)' : 'rgba(245,158,11,0.1)',
+      border: `1px solid ${info.ok ? 'rgba(34,197,94,0.35)' : 'rgba(245,158,11,0.4)'}`,
+      color: info.ok ? 'var(--success)' : 'var(--warning)',
+    }}>
+      {info.ok
+        ? <>Admin reader online: <strong>{info.label}</strong></>
+        : <>{info.message}</>}
+    </div>
+  )
+}
+
 // ─── Scan & auto-assign numbers (admin reader + USB) ─────────────────────────
 
 function AutoAssignPanel({ cards, nextNumber, onRegistered }) {
@@ -713,9 +775,12 @@ function AutoAssignPanel({ cards, nextNumber, onRegistered }) {
       </div>
 
       {source === 'admin' ? (
-        <p style={{ fontSize: 13, color: 'var(--text-2)', margin: 0, fontWeight: 500 }}>
-          {loading ? 'Processing…' : 'Place card on the admin room reader and hold until it beeps.'}
-        </p>
+        <>
+          <AdminReaderBanner />
+          <p style={{ fontSize: 13, color: 'var(--text-2)', margin: 0, fontWeight: 500 }}>
+            {loading ? 'Processing…' : 'Place card on the admin room reader and hold until it beeps.'}
+          </p>
+        </>
       ) : (
         <input
           ref={usbRef}

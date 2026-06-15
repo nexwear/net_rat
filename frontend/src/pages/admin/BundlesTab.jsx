@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { API_BASE, adminHeaders } from './AdminPage.jsx'
+import { AdminReaderBanner } from './CardsTab.jsx'
 
 const STATUS_CLASS = {
   ISSUED: 'badge badge-gray',
@@ -280,6 +281,9 @@ function AssignCardModal({ bundle, onClose, onDone }) {
             <p style={{ fontSize: 12, color: 'var(--text-3)', margin: 0, lineHeight: 1.5 }}>
               Tap the NFC card on the <strong>admin room reader</strong>. This scan is only used to link the card to this bundle — it does not start a production session.
             </p>
+            <div style={{ marginTop: 10 }}>
+              <AdminReaderBanner />
+            </div>
             {lastTap?.cardNumber != null && (
               <div style={{
                 marginTop: 10, display: 'flex', alignItems: 'center', gap: 10,

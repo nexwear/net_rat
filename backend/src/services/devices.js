@@ -280,14 +280,24 @@ async function runYieldChecks({ count_pass: pass, count_cycle: cycle, node_id: n
 }
 
 async function ingestScan(node, body) {
-  const { eventId, seq, kind, cardUid, ts, tsValid } = body;
+  const { eventId, seq, kind, cardUid, ts, tsValid, moduleType: bodyModule } = body;
 
-  // Admin-room reader: ASSIGN_SCAN only (card → bundle). Line nodes never emit this.
-  if (node.module_type === 'ADMIN') {
+  const deviceReportsAdmin = bodyModule === 'ADMIN';
+  const isAdminNode = node.module_type === 'ADMIN' || deviceReportsAdmin;
+
+  // Admin-room reader: ASSIGN_SCAN only (card registry / bundle assign). Line nodes never emit this.
+  if (isAdminNode) {
     if (kind !== 'ASSIGN_SCAN') {
       const err = new Error('ADMIN nodes only accept ASSIGN_SCAN');
       err.status = 400;
       throw err;
+    }
+    if (deviceReportsAdmin && node.module_type !== 'ADMIN') {
+      await query(
+        `UPDATE nodes SET module_type = 'ADMIN'::module_type WHERE id = $1`,
+        [node.id]
+      );
+      node.module_type = 'ADMIN';
     }
   } else if (kind === 'ASSIGN_SCAN') {
     const err = new Error('ASSIGN_SCAN only allowed from ADMIN nodes');
