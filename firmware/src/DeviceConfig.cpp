@@ -148,3 +148,29 @@ bool ConfigStore::commitPendingFwVersion(DeviceConfig& cfg) {
   Serial.printf("[OTA] Committed fwVersion=%s to NVS\n", pending.c_str());
   return true;
 }
+
+void ConfigStore::setOpAck() {
+  Preferences prefs;
+  if (prefs.begin(kNs, false)) {
+    prefs.putBool("opAck", true);
+    prefs.end();
+  }
+}
+
+bool ConfigStore::getOpAck() {
+  Preferences prefs;
+  if (!prefs.begin(kNs, true)) {
+    return false;
+  }
+  const bool val = getBool(prefs, "opAck", false);
+  prefs.end();
+  return val;
+}
+
+void ConfigStore::clearOpAck() {
+  Preferences prefs;
+  if (prefs.begin(kNs, false)) {
+    prefs.remove("opAck");
+    prefs.end();
+  }
+}

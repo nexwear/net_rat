@@ -4,6 +4,7 @@ param(
   [string]$ModuleType = "",
   [int]$RolloutPct = 100,
   [string]$ApiBase = "http://localhost:4000",
+  [string]$AdminSecret = "",
   [string]$BinPath = "..\firmware\.pio\build\esp32dev\firmware.bin"
 )
 
@@ -22,6 +23,9 @@ Copy-Item $resolvedBin $destPath -Force
 Write-Host "Copied to $destPath"
 
 $apiBase = $ApiBase.TrimEnd('/')
+$headers = @{}
+if ($AdminSecret) { $headers['Authorization'] = "Bearer $AdminSecret" }
+
 $isRemote = $apiBase -notmatch 'localhost|127\.0\.0\.1'
 
 if ($isRemote) {
@@ -29,7 +33,7 @@ if ($isRemote) {
   $bytes = [System.IO.File]::ReadAllBytes($destPath)
   $uploadUri = "$apiBase/v1/admin/ota/firmware/$destName"
   try {
-    Invoke-RestMethod -Method PUT -Uri $uploadUri `
+    Invoke-RestMethod -Method PUT -Uri $uploadUri -Headers $headers `
       -ContentType "application/octet-stream" -Body $bytes | Out-Null
     Write-Host "Uploaded $($bytes.Length) bytes"
   } catch {
@@ -48,7 +52,7 @@ if ($ModuleType) {
 }
 
 $json = $body | ConvertTo-Json
-$result = Invoke-RestMethod -Method POST -Uri "$apiBase/v1/admin/ota/releases" `
+$result = Invoke-RestMethod -Method POST -Uri "$apiBase/v1/admin/ota/releases" -Headers $headers `
   -ContentType "application/json" -Body $json
 
 Write-Host "Registered release:"

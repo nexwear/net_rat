@@ -37,6 +37,39 @@ bool TelemetrySender::postJson(const String& path, const String& body) {
   return code >= 200 && code < 300;
 }
 
+bool TelemetrySender::postJsonWithResponse(const String& path, const String& body,
+                                           String& responseOut) {
+  if (WiFi.status() != WL_CONNECTED) {
+    return false;
+  }
+
+  const String url = _cfg.serverUrl + path;
+  const bool useTls = _cfg.serverUrl.startsWith("https://");
+
+  HTTPClient http;
+  bool begun = false;
+
+  if (useTls) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    begun = http.begin(client, url);
+  } else {
+    WiFiClient client;
+    begun = http.begin(client, url);
+  }
+
+  if (!begun) {
+    return false;
+  }
+
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Node-Token", _cfg.token);
+  const int code = http.POST(body);
+  responseOut = http.getString();
+  http.end();
+  return code >= 200 && code < 300;
+}
+
 bool TelemetrySender::send(const TelemetryEvent& ev) {
   JsonDocument doc;
 
@@ -94,7 +127,8 @@ bool TelemetrySender::send(const TelemetryEvent& ev) {
   return ok;
 }
 
-bool TelemetrySender::sendHeartbeat(int rssi, uint32_t uptimeSec, size_t queueDepth, uint32_t flags) {
+bool TelemetrySender::sendHeartbeat(int rssi, uint32_t uptimeSec, size_t queueDepth,
+                                    uint32_t flags, String* responseBody) {
   JsonDocument doc;
   doc["nodeId"] = _cfg.nodeId;
   doc["rssi"] = rssi;
@@ -103,7 +137,16 @@ bool TelemetrySender::sendHeartbeat(int rssi, uint32_t uptimeSec, size_t queueDe
   doc["queueDepth"] = queueDepth;
   doc["flags"] = flags;
 
+  if (ConfigStore::getOpAck()) {
+    doc["ackedOp"] = true;
+    ConfigStore::clearOpAck();
+  }
+
   String body;
   serializeJson(doc, body);
+
+  if (responseBody) {
+    return postJsonWithResponse("/v1/heartbeat", body, *responseBody);
+  }
   return postJson("/v1/heartbeat", body);
 }

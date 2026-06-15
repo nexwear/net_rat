@@ -45,6 +45,7 @@ void setup() {
   if (gConfig.wifi.size() > 0) {
     Serial.printf("[BOOT] WiFi target: %s\n", gConfig.wifi[0].ssid.c_str());
   }
+  Serial.printf("[BOOT] Server: %s\n", gConfig.serverUrl.c_str());
 
   telemetryQ = xQueueCreate(32, sizeof(TelemetryEvent));
   commandQ = xQueueCreate(8, sizeof(Command));

@@ -8,6 +8,7 @@ class OtaMgr {
   OtaMgr(const DeviceConfig& cfg, OfflineStore& store);
 
   void handle(bool wifiUp, bool sessionOpen);
+  void forceCheck() { _lastCheckMs = 0; }
 
  private:
   bool checkForUpdate(String& outVersion, String& outUrl, String& outSha256);

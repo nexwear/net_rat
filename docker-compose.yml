@@ -23,6 +23,7 @@ services:
       - MQTT_HOST=mosquitto
       - AUTO_APPROVE_DEVICES=true
       - OTA_PUBLIC_BASE_URL=http://15.206.16.137/api
+      - ADMIN_SECRET=${ADMIN_SECRET:-change-me}
     depends_on:
       - postgres
       - mosquitto
@@ -31,7 +32,7 @@ services:
   frontend:
     build: ./frontend
     environment:
-      - NEXT_PUBLIC_API_URL=http://15.206.16.137/api
+      - VITE_ADMIN_SECRET=${VITE_ADMIN_SECRET:-change-me}
     restart: always
 
   postgres:

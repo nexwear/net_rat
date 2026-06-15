@@ -159,6 +159,9 @@ CREATE TABLE IF NOT EXISTS ota_events (
 );
 
 CREATE INDEX IF NOT EXISTS ota_events_node_ts ON ota_events(node_id, ts DESC);
+
+ALTER TABLE nodes ADD COLUMN IF NOT EXISTS pending_op JSONB;
+ALTER TABLE nodes ADD COLUMN IF NOT EXISTS pending_op_at TIMESTAMPTZ;
 `;
 
 async function initDb() {

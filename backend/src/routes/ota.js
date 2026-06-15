@@ -25,6 +25,14 @@ async function deviceAuth(req, res, next) {
   next();
 }
 
+function adminAuth(req, res, next) {
+  const secret = process.env.ADMIN_SECRET;
+  if (secret && req.get('Authorization') !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: 'admin auth required' });
+  }
+  next();
+}
+
 router.post('/ota/check', deviceAuth, async (req, res) => {
   try {
     const result = await checkUpdate(req.node, req.body || {}, req);
@@ -55,7 +63,7 @@ router.get('/ota/bin/:fileName', (req, res) => {
   }
 });
 
-router.get('/admin/ota/releases', async (_req, res) => {
+router.get('/admin/ota/releases', adminAuth, async (_req, res) => {
   try {
     res.json(await listReleases());
   } catch (err) {
@@ -65,7 +73,8 @@ router.get('/admin/ota/releases', async (_req, res) => {
 
 router.put(
   '/admin/ota/firmware/:fileName',
-  express.raw({ type: 'application/octet-stream', limit: '2mb' }),
+  adminAuth,
+  express.raw({ type: 'application/octet-stream', limit: '4mb' }),
   (req, res) => {
     try {
       ensureFirmwareDir();
@@ -84,7 +93,7 @@ router.put(
   }
 );
 
-router.post('/admin/ota/releases', async (req, res) => {
+router.post('/admin/ota/releases', adminAuth, async (req, res) => {
   try {
     const { version, moduleType, rolloutPct, fileName } = req.body || {};
     if (!version) {
@@ -97,7 +106,7 @@ router.post('/admin/ota/releases', async (req, res) => {
   }
 });
 
-router.patch('/admin/ota/releases/:id', async (req, res) => {
+router.patch('/admin/ota/releases/:id', adminAuth, async (req, res) => {
   try {
     const release = await setRollout(Number(req.params.id), req.body || {});
     res.json(release);

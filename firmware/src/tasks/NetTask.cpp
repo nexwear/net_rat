@@ -6,6 +6,7 @@
 #include "util/TimeUtil.h"
 #include "DeviceConfig.h"
 #include "net/OtaMgr.h"
+#include "net/RemoteConfig.h"
 #include "core/RuntimeFlags.h"
 #include <ArduinoOTA.h>
 #include <ArduinoJson.h>
@@ -147,8 +148,22 @@ void netLoop(void* param) {
     if ((now - lastHeartbeatMs) >= 15000) {
       const size_t depth = uxQueueMessagesWaiting(ctx->telemetryQ) + store.depth();
       uint32_t flags = store.overflow() ? 1 : 0;
-      sender.sendHeartbeat(WiFi.RSSI(), now / 1000, depth, flags);
+      String hbResp;
+      sender.sendHeartbeat(WiFi.RSSI(), now / 1000, depth, flags, &hbResp);
       lastHeartbeatMs = now;
+
+      if (hbResp.length() > 0) {
+        JsonDocument hbDoc;
+        if (deserializeJson(hbDoc, hbResp) == DeserializationError::Ok) {
+          if (!hbDoc["pendingOp"].isNull() && hbDoc["pendingOp"].is<JsonObject>()) {
+            RemoteConfig::apply(hbDoc["pendingOp"].as<JsonObjectConst>());
+          }
+        }
+      }
+    }
+
+    if (gForceOtaCheck.exchange(false)) {
+      ota.forceCheck();
     }
 
     ota.handle(wifi.isConnected(), gSessionOpen.load());

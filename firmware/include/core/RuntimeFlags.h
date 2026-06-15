@@ -4,6 +4,7 @@
 
 inline std::atomic<bool> gSessionOpen{false};
 inline std::atomic<bool> gOtaActive{false};
+inline std::atomic<bool> gForceOtaCheck{false};
 
 struct CardLookupRequest {
   std::atomic<bool> pending{false};

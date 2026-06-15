@@ -1,0 +1,321 @@
+.admin-layout {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  font-family: system-ui, sans-serif;
+  background: #0f1117;
+  color: #e8e8e8;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 24px;
+  background: #1a1d27;
+  border-bottom: 1px solid #2a2d3a;
+}
+
+.admin-header h1 {
+  flex: 1;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.admin-back {
+  color: #7a8bb0;
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.admin-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tab {
+  background: transparent;
+  border: 1px solid #2a2d3a;
+  border-radius: 6px;
+  color: #9aa;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 6px 16px;
+}
+
+.tab.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+  font-weight: 600;
+}
+
+.admin-main {
+  padding: 24px;
+  flex: 1;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.section-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.admin-table th {
+  text-align: left;
+  padding: 8px 12px;
+  background: #1a1d27;
+  color: #7a8bb0;
+  font-weight: 600;
+  border-bottom: 1px solid #2a2d3a;
+  white-space: nowrap;
+}
+
+.admin-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #1e2130;
+  vertical-align: middle;
+}
+
+.admin-table tr:hover td {
+  background: #181b27;
+}
+
+.mono {
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.pending-op {
+  color: #e59f00;
+}
+
+.btn-sm {
+  background: #2a2d3a;
+  border: 1px solid #3a3d4a;
+  border-radius: 4px;
+  color: #ccc;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.btn-sm:hover {
+  background: #3a3d4a;
+}
+
+.btn-primary {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #1d4fd8;
+}
+
+.btn-danger {
+  background: #c44;
+  border-color: #c44;
+  color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #a33;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.badge-green {
+  background: #1a3d2a;
+  color: #2caa4a;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.loading,
+.empty {
+  color: #7a8bb0;
+  font-size: 13px;
+  padding: 16px 0;
+}
+
+.error {
+  color: #f87171;
+  font-size: 13px;
+  margin: 8px 0;
+}
+
+.success {
+  color: #2caa4a;
+  font-size: 13px;
+  margin: 8px 0;
+}
+
+.info-text {
+  color: #7a8bb0;
+  font-size: 13px;
+  margin: 8px 0;
+}
+
+.warn-text {
+  color: #e59f00;
+  font-size: 13px;
+  margin: 8px 0;
+}
+
+/* Upload panel */
+.upload-panel {
+  background: #1a1d27;
+  border: 1px solid #2a2d3a;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 8px;
+}
+
+.upload-panel h3 {
+  margin: 0 0 16px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.upload-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.upload-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px;
+}
+
+.upload-panel label,
+.modal label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #7a8bb0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.upload-panel input,
+.upload-panel select,
+.modal input,
+.modal select {
+  background: #0f1117;
+  border: 1px solid #2a2d3a;
+  border-radius: 4px;
+  color: #e8e8e8;
+  font-size: 13px;
+  padding: 6px 10px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: #1a1d27;
+  border: 1px solid #2a2d3a;
+  border-radius: 10px;
+  padding: 28px;
+  width: 420px;
+  max-width: 95vw;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.modal-node-id {
+  font-family: monospace;
+  font-size: 12px;
+  color: #7a8bb0;
+  margin: 0;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.reconfig-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.rtab {
+  background: transparent;
+  border: 1px solid #2a2d3a;
+  border-radius: 4px;
+  color: #9aa;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 12px;
+}
+
+.rtab.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #e59f00;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.check-row input[type='checkbox'] {
+  width: auto;
+  padding: 0;
+}

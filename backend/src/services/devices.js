@@ -274,7 +274,14 @@ async function ingestUnassigned(node, body) {
 }
 
 async function ingestHeartbeat(node, body) {
-  const { rssi, uptime, fwVersion, queueDepth, flags } = body;
+  const { rssi, uptime, fwVersion, queueDepth, flags, ackedOp } = body;
+
+  if (ackedOp) {
+    await query(
+      'UPDATE nodes SET pending_op = NULL, pending_op_at = NULL WHERE id = $1',
+      [node.id]
+    );
+  }
 
   await query(
     `UPDATE nodes SET last_seen_at = NOW(), rssi = $2, fw_version = $3,
@@ -289,7 +296,10 @@ async function ingestHeartbeat(node, body) {
     [node.id, rssi, uptime, fwVersion, queueDepth, flags ? JSON.stringify(flags) : null]
   );
 
-  return { ok: true, serverTimeMs: Date.now() };
+  const { rows } = await query('SELECT pending_op FROM nodes WHERE id = $1', [node.id]);
+  const pendingOp = rows[0]?.pending_op ?? null;
+
+  return { ok: true, serverTimeMs: Date.now(), pendingOp };
 }
 
 module.exports = {

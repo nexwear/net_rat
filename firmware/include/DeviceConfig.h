@@ -32,4 +32,7 @@ class ConfigStore {
   static String chipId();
   static void setPendingFwVersion(const String& version);
   static bool commitPendingFwVersion(DeviceConfig& cfg);
+  static void setOpAck();
+  static bool getOpAck();
+  static void clearOpAck();
 };

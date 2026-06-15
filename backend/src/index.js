@@ -6,6 +6,7 @@ const cardRoutes = require('./routes/cards');
 const bundleRoutes = require('./routes/bundles');
 const statusRoutes = require('./routes/status');
 const otaRoutes = require('./routes/ota');
+const adminRoutes = require('./routes/admin');
 const { ensureFirmwareDir } = require('./services/ota');
 
 const app = express();
@@ -27,6 +28,7 @@ app.use('/v1', bundleRoutes);
 app.use('/v1', statusRoutes);
 app.use('/v1', otaRoutes);
 app.use('/v1', ingestRoutes);
+app.use('/v1/admin', adminRoutes);
 
 async function start() {
   try {
