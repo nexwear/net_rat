@@ -2,20 +2,13 @@ const express = require('express');
 const { query } = require('../db');
 const { approveDevice } = require('../services/devices');
 const { listAlerts, ackAlert } = require('../services/alerts');
+const { jwtAuth, requirePerm } = require('../middleware/rbac');
 
 const router = express.Router();
-
 const VALID_OP_TYPES = ['SET_MODULE_TYPE', 'SET_WIFI', 'FACTORY_RESET', 'FORCE_OTA_CHECK'];
 
-function adminAuth(req, res, next) {
-  const secret = process.env.ADMIN_SECRET;
-  if (secret && req.get('Authorization') !== `Bearer ${secret}`) {
-    return res.status(401).json({ error: 'admin auth required' });
-  }
-  next();
-}
-
-router.use(adminAuth);
+// All admin routes require authentication
+router.use(jwtAuth);
 
 router.get('/nodes', async (_req, res) => {
   try {
@@ -42,7 +35,7 @@ router.get('/nodes', async (_req, res) => {
   }
 });
 
-router.post('/nodes/:nodeId/approve', async (req, res) => {
+router.post('/nodes/:nodeId/approve', requirePerm('nodes.config'), async (req, res) => {
   try {
     const { lineId, moduleType } = req.body || {};
     const node = await approveDevice(req.params.nodeId, { lineId, moduleType });
@@ -58,7 +51,7 @@ router.post('/nodes/:nodeId/approve', async (req, res) => {
   }
 });
 
-router.post('/nodes/:nodeId/reconfig', async (req, res) => {
+router.post('/nodes/:nodeId/reconfig', requirePerm('nodes.config'), async (req, res) => {
   try {
     const { type, moduleType, wifi } = req.body || {};
 
@@ -167,7 +160,7 @@ router.get('/alerts', async (req, res) => {
   }
 });
 
-router.post('/alerts/:id/ack', async (req, res) => {
+router.post('/alerts/:id/ack', requirePerm('alerts.manage'), async (req, res) => {
   try {
     const alert = await ackAlert(Number(req.params.id));
     if (!alert) return res.status(404).json({ error: 'alert not found or already acked' });
@@ -188,7 +181,7 @@ router.get('/contractors', async (_req, res) => {
   }
 });
 
-router.post('/contractors', async (req, res) => {
+router.post('/contractors', requirePerm('master.manage'), async (req, res) => {
   try {
     const { name, code, ratePerPiece } = req.body || {};
     if (!name) return res.status(400).json({ error: 'name required' });
@@ -211,7 +204,7 @@ router.get('/garment-models', async (_req, res) => {
   }
 });
 
-router.post('/garment-models', async (req, res) => {
+router.post('/garment-models', requirePerm('master.manage'), async (req, res) => {
   try {
     const { style, sam, opsCount } = req.body || {};
     if (!style) return res.status(400).json({ error: 'style required' });

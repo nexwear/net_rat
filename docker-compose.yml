@@ -24,6 +24,9 @@ services:
       - AUTO_APPROVE_DEVICES=true
       - OTA_PUBLIC_BASE_URL=http://15.206.16.137/api
       - ADMIN_SECRET=${ADMIN_SECRET:-change-me}
+      - JWT_SECRET=${JWT_SECRET:-change-me-jwt-secret}
+      - SUPER_ADMIN_EMAIL=${SUPER_ADMIN_EMAIL:-admin@nexwear.io}
+      - SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD:-Nexwear@2025}
     depends_on:
       - postgres
       - mosquitto

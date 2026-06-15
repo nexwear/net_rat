@@ -12,6 +12,8 @@ const { ensureFirmwareDir } = require('./services/ota');
 const offlineWatcher = require('./services/offlineWatcher');
 const broker = require('./services/broker');
 const mqttClient = require('./services/mqttClient');
+const authRoutes = require('./routes/auth');
+const { ensureDefaultAdmin } = require('./services/auth');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -21,6 +23,7 @@ app.use(express.json());
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'backend' }));
 app.get('/healthz', (_req, res) => res.json({ status: 'ok' }));
 
+app.use('/v1/auth', authRoutes);
 app.use('/v1/devices', deviceRoutes);
 app.use('/v1', cardRoutes);
 app.use('/v1', bundleRoutes);
@@ -34,6 +37,7 @@ const server = http.createServer(app);
 async function start() {
   try {
     await initDb();
+    await ensureDefaultAdmin();
     ensureFirmwareDir();
     console.log('Database ready');
   } catch (err) {

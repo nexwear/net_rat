@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { API_BASE, adminHeaders } from './AdminPage.jsx'
+import { API_BASE, adminHeaders, apiFetch } from './AdminPage.jsx'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

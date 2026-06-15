@@ -83,6 +83,31 @@
   flex-shrink: 0;
 }
 
+/* ── User info ───────────────────────────────────────── */
+
+.admin-user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  margin-right: 10px;
+  flex-shrink: 0;
+}
+
+.admin-user-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.admin-user-role {
+  font-size: 10px;
+  color: var(--text-3);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 /* ── Navigation tabs ──────────────────────────────────── */
 
 .admin-tabs {
