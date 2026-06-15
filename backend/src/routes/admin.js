@@ -677,4 +677,35 @@ router.post('/bundles/:bundleId/release-card', async (req, res) => {
   }
 });
 
+// Wipe operational data (cards, nodes, bundles, scans). SUPER_ADMIN only.
+router.post('/db/clear', async (req, res) => {
+  try {
+    if (req.user?.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'SUPER_ADMIN required' });
+    }
+    if (req.body?.confirm !== 'CLEAR') {
+      return res.status(400).json({ error: 'send { "confirm": "CLEAR" }' });
+    }
+    await query(`
+      TRUNCATE TABLE
+        count_samples,
+        sessions,
+        scan_events,
+        unassigned_counts,
+        heartbeats,
+        ota_events,
+        alerts,
+        device_tokens,
+        bundles,
+        cards,
+        nodes,
+        ppp_calibration
+      RESTART IDENTITY CASCADE
+    `);
+    res.json({ ok: true, cleared: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
