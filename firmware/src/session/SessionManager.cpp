@@ -133,7 +133,11 @@ void SessionManager::emit(TelemetryType type, ScanKind scanKind, CloseReason rea
     ev.sessionId[0] = '\0';
   }
 
-  xQueueSend(_telemetryQ, &ev, 0);
+  if (xQueueSend(_telemetryQ, &ev, pdMS_TO_TICKS(50)) != pdTRUE) {
+    Serial.printf("[TELEM] queue full — dropped %s\n",
+                  type == TelemetryType::SCAN ? "SCAN" : "event");
+    return;
+  }
 
   if (type == TelemetryType::SCAN) {
     Serial.printf("[TELEM] SCAN %s uid=%s\n", scanKindToString(scanKind), ev.cardUid);

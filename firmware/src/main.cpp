@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <atomic>
+#include <WiFi.h>
 #include "DeviceConfig.h"
 #include "prov/Provisioning.h"
 #include "prov/SerialConfig.h"
@@ -48,8 +49,11 @@ void setup() {
   }
   Serial.printf("[BOOT] Server: %s\n", gConfig.serverUrl.c_str());
 
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(WIFI_PS_NONE);
+
   telemetryQ = xQueueCreate(32, sizeof(TelemetryEvent));
-  commandQ = xQueueCreate(8, sizeof(Command));
+  commandQ = xQueueCreate(16, sizeof(Command));
 
   startNetTask(gConfig, telemetryQ, commandQ, gNodeState, gSeq);
   startSensingTask(gConfig, telemetryQ, commandQ, gNodeState, gSeq);

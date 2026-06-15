@@ -34,6 +34,8 @@ bool TelemetrySender::postJson(const String& path, const String& body) {
     return false;
   }
 
+  http.setConnectTimeout(5000);
+  http.setTimeout(5000);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-Node-Token", _cfg.token);
   const int code = http.POST(body);
@@ -66,6 +68,8 @@ bool TelemetrySender::postJsonWithResponse(const String& path, const String& bod
     return false;
   }
 
+  http.setConnectTimeout(5000);
+  http.setTimeout(5000);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-Node-Token", _cfg.token);
   const int code = http.POST(body);
@@ -118,7 +122,9 @@ bool TelemetrySender::send(const TelemetryEvent& ev) {
           } else {
             Serial.printf("[ADMIN] scan post failed uid=%s\n", ev.cardUid);
           }
-          xQueueSend(_commandQ, &cmd, 0);
+          if (xQueueSend(_commandQ, &cmd, pdMS_TO_TICKS(200)) != pdTRUE) {
+            Serial.println("[ADMIN] feedback queue full — NFC will re-arm via timeout");
+          }
         }
       } else {
         ok = postJson("/v1/scan", body);

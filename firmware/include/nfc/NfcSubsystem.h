@@ -15,18 +15,27 @@ class NfcSubsystem {
     _assignMode = enabled;
     if (enabled) {
       _assignArmed = true;
+      _disarmedSinceMs = 0;
+      _rfQuietUntilMs = 0;
       _lastUid[0] = '\0';
+      _lastRecoverMs = millis();
     }
   }
   /** After admin scan completes — allow the next card without a full removal cycle. */
   void readyForNextAssign();
   bool healthy() const { return _healthy; }
+  /** True when admin reader is armed and waiting for a card tap. */
+  bool assignListening() const { return _assignMode && _assignArmed && _initialized; }
 
  private:
   bool readUid(char out[24]);
   bool readUid14443(char out[24]);
   bool readUid15693(char out[24]);
-  void emitTap(const char* uid);
+  bool ensureBusReady();
+  void forceHardwareReset();
+  void recoverReader(const char* reason);
+  bool emitTap(const char* uid);
+  void tickAssignWatchdog(uint32_t now);
   uint32_t pollIntervalMs() const;
 
   pins::PinMap _pins;
@@ -42,6 +51,9 @@ class NfcSubsystem {
   uint32_t _lastTapMs = 0;
   uint32_t _lastIdleLogMs = 0;
   uint32_t _quietUntilMs = 0;
+  uint32_t _rfQuietUntilMs = 0;
+  uint32_t _disarmedSinceMs = 0;
+  uint32_t _lastRecoverMs = 0;
   char _lastUid[24] = "";
 
   static constexpr uint32_t POLL_INTERVAL_MS = 120;
@@ -49,7 +61,11 @@ class NfcSubsystem {
   static constexpr uint32_t POST_READ_QUIET_MS = 1000;
   static constexpr uint32_t TAP_GLITCH_MS = 300;
   static constexpr uint32_t ASSIGN_SAME_UID_MS = 800;
-  static constexpr uint32_t ASSIGN_REARM_MS = 1500;
+  static constexpr uint32_t ASSIGN_REARM_MS = 1200;
+  static constexpr uint32_t ASSIGN_RF_QUIET_MS = 450;
+  static constexpr uint32_t ASSIGN_STUCK_MS = 6000;
+  static constexpr uint32_t PERIODIC_RECOVER_MS = 30000;
+  static constexpr uint32_t BUSY_STUCK_MS = 80;
   static constexpr uint8_t ABSENT_DEBOUNCE_POLLS = 2;
   static constexpr uint8_t ASSIGN_ABSENT_DEBOUNCE_POLLS = 2;
 };

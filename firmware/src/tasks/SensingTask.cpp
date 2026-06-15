@@ -9,6 +9,7 @@
 #include "nfc/NfcSubsystem.h"
 #include "session/SessionManager.h"
 #include "core/RuntimeFlags.h"
+#include <esp_task_wdt.h>
 
 namespace {
 struct SensingContext {
@@ -56,9 +57,20 @@ void sensingLoop(void* param) {
   pinMode(pinMap.statusLed, OUTPUT);
   uint32_t buttonDownMs = 0;
   uint32_t adminLedUntilMs = 0;
+  uint32_t adminHeartbeatMs = 0;
+  bool adminHeartbeatOn = false;
+
+  esp_err_t wdtErr = esp_task_wdt_add(nullptr);
+  const bool wdtActive = (wdtErr == ESP_OK || wdtErr == ESP_ERR_INVALID_STATE);
+  if (wdtErr == ESP_OK) {
+    Serial.println("[SENS] task watchdog enabled (10s)");
+  }
 
   TickType_t lastWake = xTaskGetTickCount();
   for (;;) {
+    if (wdtActive) {
+      esp_task_wdt_reset();
+    }
     for (auto* d : drivers) {
       d->poll();
     }
@@ -100,7 +112,18 @@ void sensingLoop(void* param) {
     if (gOtaActive.load()) {
       // LED blinks rapidly during production OTA (handled in OtaMgr)
     } else if (moduleType == ModuleType::ADMIN) {
-      digitalWrite(pinMap.statusLed, millis() < adminLedUntilMs ? HIGH : LOW);
+      const uint32_t nowMs = millis();
+      if (nowMs < adminLedUntilMs) {
+        digitalWrite(pinMap.statusLed, HIGH);
+      } else if (nfc.assignListening()) {
+        if ((nowMs - adminHeartbeatMs) >= 2500) {
+          adminHeartbeatMs = nowMs;
+          adminHeartbeatOn = !adminHeartbeatOn;
+        }
+        digitalWrite(pinMap.statusLed, adminHeartbeatOn ? HIGH : LOW);
+      } else {
+        digitalWrite(pinMap.statusLed, LOW);
+      }
     } else if (sessions.hasOpenSession()) {
       digitalWrite(pinMap.statusLed, HIGH);
     } else {

@@ -32,7 +32,8 @@ bool pn5180Responding(PN5180ISO14443* nfc) {
   return productVersion[1] != 0xFF;
 }
 
-void tryRecoverReader(PN5180ISO14443* nfc, uint8_t& failStreak, bool& healthy) {
+void tryRecoverReader(PN5180ISO14443* nfc, PN5180ISO15693* iso15693, uint8_t& failStreak,
+                      bool& healthy) {
   if (++failStreak < 3) {
     return;
   }
@@ -41,7 +42,13 @@ void tryRecoverReader(PN5180ISO14443* nfc, uint8_t& failStreak, bool& healthy) {
   Serial.println("[NFC] RF setup failed — re-initializing PN5180");
   nfc->begin();
   nfc->reset();
+  if (iso15693) {
+    iso15693->begin();
+  }
   healthy = pn5180Responding(nfc);
+  if (!healthy) {
+    Serial.println("[NFC] PN5180 still not responding after re-init");
+  }
 }
 }  // namespace
 
@@ -72,14 +79,61 @@ bool NfcSubsystem::begin() {
   _cardPresent = false;
   _absentStreak = 0;
   _quietUntilMs = 0;
+  _lastRecoverMs = millis();
   Serial.printf("[NFC] PN5180 ready (product 0x%02X%02X)\n", productVersion[0], productVersion[1]);
   return true;
 }
 
+bool NfcSubsystem::ensureBusReady() {
+  const uint32_t start = millis();
+  while (digitalRead(_pins.pn5180Busy) == HIGH) {
+    if ((millis() - start) > BUSY_STUCK_MS) {
+      Serial.println("[NFC] BUSY stuck — hardware reset");
+      forceHardwareReset();
+      return false;
+    }
+    delay(1);
+  }
+  return true;
+}
+
+void NfcSubsystem::forceHardwareReset() {
+  if (_pins.pn5180Rst < 0 || !gIso14443) {
+    return;
+  }
+  digitalWrite(_pins.pn5180Rst, LOW);
+  delay(15);
+  digitalWrite(_pins.pn5180Rst, HIGH);
+  delay(15);
+  gIso14443->reset();
+  if (gIso15693) {
+    gIso15693->begin();
+  }
+  _failStreak = 0;
+  _healthy = pn5180Responding(gIso14443);
+}
+
+void NfcSubsystem::recoverReader(const char* reason) {
+  Serial.printf("[NFC] recover: %s\n", reason ? reason : "unknown");
+  _lastRecoverMs = millis();
+  _failStreak = 0;
+  forceHardwareReset();
+  if (!gIso14443 || !gIso15693) {
+    return;
+  }
+  gIso14443->begin();
+  gIso15693->begin();
+  _healthy = pn5180Responding(gIso14443);
+  _rfQuietUntilMs = millis() + 200;
+}
+
 bool NfcSubsystem::readUid14443(char out[24]) {
+  if (!ensureBusReady()) {
+    return false;
+  }
   gIso14443->reset();
   if (!gIso14443->setupRF()) {
-    tryRecoverReader(gIso14443, _failStreak, _healthy);
+    tryRecoverReader(gIso14443, gIso15693, _failStreak, _healthy);
     return false;
   }
   uint8_t uid[10] = {};
@@ -94,9 +148,12 @@ bool NfcSubsystem::readUid14443(char out[24]) {
 }
 
 bool NfcSubsystem::readUid15693(char out[24]) {
+  if (!ensureBusReady()) {
+    return false;
+  }
   gIso15693->reset();
   if (!gIso15693->setupRF()) {
-    tryRecoverReader(gIso14443, _failStreak, _healthy);
+    tryRecoverReader(gIso14443, gIso15693, _failStreak, _healthy);
     return false;
   }
   uint8_t uid15693[8] = {};
@@ -132,6 +189,8 @@ void NfcSubsystem::readyForNextAssign() {
   _cardPresent = false;
   _absentStreak = 0;
   _assignArmed = true;
+  _disarmedSinceMs = 0;
+  _rfQuietUntilMs = 0;
   _lastUid[0] = '\0';
   if (gIso14443) {
     gIso14443->reset();
@@ -139,14 +198,39 @@ void NfcSubsystem::readyForNextAssign() {
   Serial.println("[NFC] ready for next card");
 }
 
-void NfcSubsystem::emitTap(const char* uid) {
-  if (!_onTap || uid[0] == '\0') {
+void NfcSubsystem::tickAssignWatchdog(uint32_t now) {
+  if (!_assignMode || !_initialized) {
     return;
+  }
+
+  if (!_assignArmed && _disarmedSinceMs != 0 && (now - _disarmedSinceMs) >= ASSIGN_STUCK_MS) {
+    Serial.println("[NFC] assign slot stuck — force re-arm");
+    readyForNextAssign();
+    recoverReader("assign slot stuck");
+    return;
+  }
+
+  if (_assignArmed && _lastTapMs != 0 && (now - _lastTapMs) >= PERIODIC_RECOVER_MS &&
+      (now - _lastRecoverMs) >= PERIODIC_RECOVER_MS) {
+    recoverReader("periodic refresh");
+    readyForNextAssign();
+    return;
+  }
+}
+
+bool NfcSubsystem::emitTap(const char* uid) {
+  if (!_onTap || uid[0] == '\0') {
+    return false;
   }
   const uint32_t now = millis();
   const uint32_t debounceMs = _assignMode ? ASSIGN_SAME_UID_MS : TAP_GLITCH_MS;
   if (strcmp(uid, _lastUid) == 0 && (now - _lastTapMs) < debounceMs) {
-    return;
+    if (_assignMode) {
+      _rfQuietUntilMs = now + ASSIGN_RF_QUIET_MS;
+      _assignArmed = false;
+      _disarmedSinceMs = now;
+    }
+    return false;
   }
   strncpy(_lastUid, uid, sizeof(_lastUid) - 1);
   _lastTapMs = now;
@@ -156,8 +240,11 @@ void NfcSubsystem::emitTap(const char* uid) {
     _cardPresent = false;
     _absentStreak = 0;
     _assignArmed = false;
-    _lastPollMs = millis();
+    _disarmedSinceMs = now;
+    _rfQuietUntilMs = now + ASSIGN_RF_QUIET_MS;
+    _lastPollMs = now;
   }
+  return true;
 }
 
 void NfcSubsystem::pollRead() {
@@ -167,15 +254,29 @@ void NfcSubsystem::pollRead() {
   }
   _lastPollMs = now;
 
+  if (!_initialized) {
+    if ((now - _lastIdleLogMs) > 60000) {
+      _lastIdleLogMs = now;
+      Serial.println("[NFC] reader unavailable — reboot or check wiring");
+    }
+    return;
+  }
+
   char uid[24] = "";
 
   if (_assignMode) {
+    tickAssignWatchdog(now);
+
     if (!_assignArmed) {
       if ((now - _lastTapMs) >= ASSIGN_REARM_MS) {
         readyForNextAssign();
       } else {
         return;
       }
+    }
+
+    if (_rfQuietUntilMs != 0 && now < _rfQuietUntilMs) {
+      return;
     }
 
     const bool present = readUid(uid);
@@ -185,6 +286,11 @@ void NfcSubsystem::pollRead() {
       return;
     }
 
+    if (!_healthy && _failStreak >= 3) {
+      recoverReader("read failures");
+      readyForNextAssign();
+    }
+
     if (++_absentStreak >= ASSIGN_ABSENT_DEBOUNCE_POLLS) {
       _absentStreak = 0;
       _cardPresent = false;
@@ -192,7 +298,8 @@ void NfcSubsystem::pollRead() {
 
     if ((now - _lastIdleLogMs) > 30000) {
       _lastIdleLogMs = now;
-      Serial.println("[NFC] admin reader listening — present card");
+      Serial.printf("[NFC] admin reader listening — present card (armed=%d healthy=%d)\n",
+                    _assignArmed ? 1 : 0, _healthy ? 1 : 0);
     }
     return;
   }
