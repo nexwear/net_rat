@@ -1,14 +1,12 @@
+/* ── Dark theme (default) ─────────────────────────────── */
 :root {
-  /* Nexwear brand */
-  --brand: #3b82f6;
-  --brand-dim: #1d4ed8;
-  --brand-subtle: rgba(59, 130, 246, 0.12);
+  --brand:          #3b82f6;
+  --brand-dim:      #1d4ed8;
+  --brand-subtle:   rgba(59,130,246,0.12);
 
-  /* Factory accent */
-  --factory: #06b6d4;
-  --factory-subtle: rgba(6, 182, 212, 0.1);
+  --factory:        #06b6d4;
+  --factory-subtle: rgba(6,182,212,0.1);
 
-  /* Surfaces */
   --bg:          #09090b;
   --surface:     #111114;
   --surface-1:   #18181b;
@@ -16,18 +14,15 @@
   --border:      #27272a;
   --border-dim:  #1e1e21;
 
-  /* Text */
-  --text:        #fafafa;
-  --text-2:      #a1a1aa;
-  --text-3:      #52525b;
+  --text:   #fafafa;
+  --text-2: #a1a1aa;
+  --text-3: #52525b;
 
-  /* Semantic */
-  --success:     #22c55e;
-  --warning:     #f59e0b;
-  --danger:      #ef4444;
-  --danger-dim:  #b91c1c;
+  --success:    #22c55e;
+  --warning:    #f59e0b;
+  --danger:     #ef4444;
+  --danger-dim: #b91c1c;
 
-  /* Type */
   --sans: 'Inter', 'Segoe UI', system-ui, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
 
@@ -37,10 +32,38 @@
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
   color-scheme: dark;
 }
 
+/* ── Light theme ──────────────────────────────────────── */
+[data-theme="light"] {
+  --brand:          #2563eb;
+  --brand-dim:      #1d4ed8;
+  --brand-subtle:   rgba(37,99,235,0.09);
+
+  --factory:        #0891b2;
+  --factory-subtle: rgba(8,145,178,0.09);
+
+  --bg:          #f0f4f8;
+  --surface:     #ffffff;
+  --surface-1:   #f1f5f9;
+  --surface-2:   #e2e8f0;
+  --border:      #cbd5e1;
+  --border-dim:  #e2e8f0;
+
+  --text:   #0f172a;
+  --text-2: #334155;
+  --text-3: #64748b;
+
+  --success:    #16a34a;
+  --warning:    #b45309;
+  --danger:     #dc2626;
+  --danger-dim: #991b1b;
+
+  color-scheme: light;
+}
+
+/* ── Reset ────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 
 body { margin: 0; }
@@ -79,5 +102,5 @@ code {
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
-  50%       { opacity: 0.3; }
+  50%       { opacity: 0.35; }
 }

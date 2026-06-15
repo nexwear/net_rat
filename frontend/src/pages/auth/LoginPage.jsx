@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { setAuth, isLoggedIn } from '../../auth.js'
+import { getTheme, toggleTheme } from '../../theme.js'
 import './login.css'
 
 export default function LoginPage() {
@@ -9,6 +10,9 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [theme, setTheme] = useState(getTheme)
+
+  function handleTheme() { setTheme(toggleTheme()) }
 
   useEffect(() => {
     if (isLoggedIn()) navigate('/admin', { replace: true })
@@ -40,7 +44,21 @@ export default function LoginPage() {
       <div className="login-card">
         <div className="login-brand">
           <span className="login-wordmark">Nex<span>wear</span></span>
-          <span className="login-factory">Net Rat Factory</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="login-factory">Net Rat Factory</span>
+            <button
+              type="button"
+              onClick={handleTheme}
+              title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+              style={{
+                background: 'none', border: '1px solid var(--border)',
+                borderRadius: 6, color: 'var(--text-3)', cursor: 'pointer',
+                padding: '3px 6px', fontSize: 13, lineHeight: 1,
+              }}
+            >
+              {theme === 'dark' ? '☀' : '☾'}
+            </button>
+          </div>
         </div>
 
         <div className="login-body">
