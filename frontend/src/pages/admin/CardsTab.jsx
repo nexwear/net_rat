@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { API_BASE, adminHeaders } from './AdminPage.jsx'
 
 function fmt(n) {
@@ -247,6 +247,163 @@ function EditModal({ card, onClose, onDone }) {
   )
 }
 
+// ─── RFID Scan Mode panel ─────────────────────────────────────────────────────
+
+function ScanModePanel({ cards, nextNumber, onRegistered }) {
+  const inputRef  = useRef(null)
+  const [uid, setUid]         = useState('')
+  const [result, setResult]   = useState(null) // {type: 'found'|'new', card?}
+  const [loading, setLoading] = useState(false)
+  const [error, setError]     = useState('')
+
+  // Auto-focus whenever panel mounts
+  useEffect(() => { inputRef.current?.focus() }, [])
+
+  function handleKey(e) {
+    if (e.key !== 'Enter') return
+    const scanned = uid.trim().toUpperCase()
+    if (!scanned) return
+    lookupOrRegister(scanned)
+  }
+
+  async function lookupOrRegister(scanned) {
+    setResult(null); setError('')
+    const existing = cards.find((c) => c.uid === scanned)
+    if (existing) {
+      setResult({ type: 'found', card: existing })
+      setUid('')
+      return
+    }
+    // New card — auto-register with next number
+    setLoading(true)
+    try {
+      const res = await fetch(`${API_BASE}/v1/admin/cards`, {
+        method: 'POST',
+        headers: adminHeaders(),
+        body: JSON.stringify({ uid: scanned }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed')
+      setResult({ type: 'registered', card: data })
+      onRegistered()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+      setUid('')
+      setTimeout(() => inputRef.current?.focus(), 50)
+    }
+  }
+
+  const STAT_COLOR = { AVAILABLE: 'var(--success)', IN_USE: 'var(--warning)', LOST: 'var(--danger)' }
+
+  return (
+    <div style={{
+      background: 'var(--surface)',
+      border: '2px solid var(--brand)',
+      borderRadius: 10,
+      padding: '16px 20px',
+      marginBottom: 20,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 12,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{
+          width: 8, height: 8, borderRadius: '50%',
+          background: 'var(--brand)',
+          boxShadow: '0 0 6px var(--brand)',
+          animation: 'pulse 1.5s infinite',
+          flexShrink: 0,
+        }} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--brand)' }}>RFID Scan Mode</span>
+        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>— hold card to reader. New cards auto-register with next number.</span>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          ref={inputRef}
+          value={uid}
+          onChange={(e) => setUid(e.target.value.toUpperCase())}
+          onKeyDown={handleKey}
+          placeholder="Scan card UID here…"
+          style={{
+            flex: 1,
+            background: 'var(--surface-1)', border: '1px solid var(--brand)',
+            borderRadius: 6, color: 'var(--text)', fontFamily: 'var(--mono)',
+            fontSize: 14, fontWeight: 700, padding: '9px 12px', outline: 'none',
+            letterSpacing: '0.08em',
+          }}
+          disabled={loading}
+          autoComplete="off"
+        />
+        <button
+          className="btn-sm btn-primary"
+          onClick={() => lookupOrRegister(uid.trim().toUpperCase())}
+          disabled={loading || !uid.trim()}
+        >
+          {loading ? '…' : 'Lookup'}
+        </button>
+      </div>
+
+      {error && <p className="error" style={{ margin: 0 }}>{error}</p>}
+
+      {result && (
+        <div style={{
+          display: 'flex', gap: 12, alignItems: 'center',
+          background: result.type === 'registered' ? 'rgba(34,197,94,0.08)' : 'var(--surface-1)',
+          border: `1px solid ${result.type === 'registered' ? 'rgba(34,197,94,0.3)' : 'var(--border)'}`,
+          borderRadius: 8, padding: '12px 14px',
+        }}>
+          {result.type === 'registered' && (
+            <>
+              <span style={{ fontSize: 22, fontWeight: 800, color: 'var(--success)', fontFamily: 'var(--mono)' }}>
+                {fmt(result.card.card_number)}
+              </span>
+              <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                <div>New card registered!</div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)' }}>{result.card.uid}</div>
+              </div>
+              <span className="badge badge-green" style={{ marginLeft: 'auto' }}>AVAILABLE</span>
+            </>
+          )}
+          {result.type === 'found' && (
+            <>
+              <span style={{
+                fontSize: 22, fontWeight: 800, fontFamily: 'var(--mono)',
+                color: STAT_COLOR[result.card.status] || 'var(--text)',
+              }}>
+                {fmt(result.card.card_number)}
+              </span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-2)', fontWeight: 600 }}>
+                  {result.card.label || result.card.uid}
+                </div>
+                {result.card.label && (
+                  <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-3)' }}>{result.card.uid}</div>
+                )}
+                {result.card.status === 'IN_USE' && result.card.current_bundle_id && (
+                  <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 2 }}>
+                    On bundle {result.card.current_bundle_id.slice(0, 8)}… · {result.card.contractor_name || ''} · {result.card.line_name || ''}
+                  </div>
+                )}
+              </div>
+              <span className="badge" style={{
+                background: result.card.status === 'AVAILABLE' ? 'rgba(34,197,94,0.12)'
+                           : result.card.status === 'IN_USE'    ? 'rgba(245,158,11,0.12)'
+                           : 'rgba(239,68,68,0.12)',
+                color: STAT_COLOR[result.card.status],
+              }}>
+                {result.card.status}
+              </span>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main tab ─────────────────────────────────────────────────────────────────
 
 export default function CardsTab() {
@@ -257,6 +414,7 @@ export default function CardsTab() {
   const [showRange, setShowRange] = useState(false)
   const [editCard, setEditCard] = useState(null)
   const [filter, setFilter]     = useState('ALL')
+  const [scanMode, setScanMode] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -307,10 +465,22 @@ export default function CardsTab() {
       {/* Header */}
       <div className="section-header">
         <h2>Card Registry</h2>
+        <button
+          className={scanMode ? 'btn-sm btn-primary' : 'btn-sm'}
+          onClick={() => setScanMode((v) => !v)}
+          style={scanMode ? { boxShadow: '0 0 0 2px var(--brand)' } : {}}
+        >
+          {scanMode ? '● Scan Mode ON' : 'Scan Mode'}
+        </button>
         <button className="btn-sm btn-primary" onClick={() => setShowReg(true)}>+ Register Card</button>
         <button className="btn-sm" onClick={() => setShowRange(true)}>+ Register Range</button>
         <button className="btn-sm" onClick={load}>Refresh</button>
       </div>
+
+      {/* RFID Scan Mode */}
+      {scanMode && (
+        <ScanModePanel cards={cards} nextNumber={nextNumber} onRegistered={load} />
+      )}
 
       {/* Status filter chips */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>

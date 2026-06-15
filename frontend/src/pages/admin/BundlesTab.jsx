@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { API_BASE, adminHeaders } from './AdminPage.jsx'
 
 const STATUS_CLASS = {
@@ -239,11 +239,217 @@ function AssignCardModal({ bundle, onClose, onDone }) {
   )
 }
 
+// ─── Bundle pipeline tracker ──────────────────────────────────────────────────
+
+const MOD_ORDER  = ['INPUT', 'OUTPUT_1', 'OUTPUT_2']
+const MOD_LABEL  = { INPUT: 'Input', OUTPUT_1: 'Output 1', OUTPUT_2: 'Output 2' }
+const MOD_COLOR  = { INPUT: 'var(--brand)', OUTPUT_1: '#8b5cf6', OUTPUT_2: '#ec4899' }
+
+function elapsed(start, end) {
+  if (!start) return '—'
+  const ms = (end ? new Date(end) : new Date()) - new Date(start)
+  const s = Math.floor(ms / 1000)
+  const m = Math.floor(s / 60)
+  const h = Math.floor(m / 60)
+  if (h > 0) return `${h}h ${m % 60}m`
+  if (m > 0) return `${m}m ${s % 60}s`
+  return `${s}s`
+}
+
+function StageCard({ session, declared, prev }) {
+  const done    = !!session?.end_ts
+  const active  = !!session && !done
+  const waiting = !session
+
+  const pct = declared > 0 && session ? Math.min(100, Math.round((session.count_pass / declared) * 100)) : 0
+  const color = waiting ? 'var(--border)' : (active ? MOD_COLOR[session.module_type] : 'var(--success)')
+
+  const yieldVsPrev = prev && prev.count_pass > 0 && session
+    ? Math.round((session.count_pass / prev.count_pass) * 100) : null
+
+  return (
+    <div style={{
+      flex: 1, minWidth: 160,
+      border: `1px solid ${color}`,
+      borderTop: `3px solid ${color}`,
+      borderRadius: 8,
+      padding: '14px 16px',
+      background: 'var(--surface)',
+      display: 'flex', flexDirection: 'column', gap: 8,
+      opacity: waiting ? 0.45 : 1,
+    }}>
+      {/* Stage header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{
+          fontSize: 10, fontWeight: 700, letterSpacing: 0.5,
+          color, textTransform: 'uppercase',
+        }}>
+          {MOD_LABEL[session?.module_type] || MOD_LABEL[MOD_ORDER[0]]}
+        </span>
+        <span style={{ flex: 1 }} />
+        <span style={{
+          fontSize: 10, fontWeight: 600,
+          color: waiting ? 'var(--text-3)' : active ? 'var(--warning)' : 'var(--success)',
+        }}>
+          {waiting ? 'Waiting' : active ? '⚡ Active' : '✓ Done'}
+        </span>
+      </div>
+
+      {/* Count */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+        <span style={{ fontSize: 28, fontWeight: 800, color: waiting ? 'var(--text-3)' : 'var(--text)', letterSpacing: '-0.03em' }}>
+          {session ? session.count_pass : '—'}
+        </span>
+        {declared > 0 && session && (
+          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>/ {declared} pcs</span>
+        )}
+      </div>
+
+      {/* Progress bar */}
+      {session && declared > 0 && (
+        <div style={{ background: 'var(--surface-2)', borderRadius: 3, height: 5, overflow: 'hidden' }}>
+          <div style={{
+            width: `${pct}%`, height: '100%', borderRadius: 3,
+            background: done ? 'var(--success)' : color,
+            transition: 'width 0.4s',
+          }} />
+        </div>
+      )}
+
+      {/* Stats */}
+      {session && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11, color: 'var(--text-3)' }}>
+          <span>{pct}% of declared</span>
+          {session.count_cycle > 0 && (
+            <span style={{ color: session.count_cycle !== session.count_pass ? 'var(--warning)' : 'var(--text-3)' }}>
+              Cycle sensor: {session.count_cycle}
+              {session.count_cycle !== session.count_pass && ` (Δ ${Math.abs(session.count_pass - session.count_cycle)})`}
+            </span>
+          )}
+          {yieldVsPrev != null && (
+            <span style={{ color: yieldVsPrev < 90 ? 'var(--warning)' : 'var(--success)' }}>
+              Yield from prev: {yieldVsPrev}%
+            </span>
+          )}
+          <span>Duration: {elapsed(session.start_ts, session.end_ts)}</span>
+          {session.node_id && (
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 10 }}>{session.node_id}</span>
+          )}
+          {done && session.close_reason && (
+            <span>Closed: {session.close_reason}</span>
+          )}
+        </div>
+      )}
+
+      {waiting && (
+        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>Not started</span>
+      )}
+    </div>
+  )
+}
+
+function BundleTrackModal({ bundleId, onClose }) {
+  const [data, setData]     = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError]   = useState('')
+
+  useEffect(() => {
+    fetch(`${API_BASE}/v1/admin/bundles/${bundleId}`, { headers: adminHeaders() })
+      .then((r) => r.json())
+      .then((d) => { setData(d); setLoading(false) })
+      .catch((e) => { setError(e.message); setLoading(false) })
+  }, [bundleId])
+
+  if (loading) return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal"><p className="loading">Loading…</p></div>
+    </div>
+  )
+  if (error || !data) return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal"><p className="error">{error || 'Not found'}</p></div>
+    </div>
+  )
+
+  const { bundle: b, sessions } = data
+  const sessionMap = Object.fromEntries(sessions.map((s) => [s.module_type, s]))
+
+  // Which stages actually exist in this bundle's data
+  const stages = MOD_ORDER.filter((m) => {
+    // Show a stage if there's a session for it OR it's after the last seen stage
+    const lastSeen = MOD_ORDER.findIndex((m2) => sessionMap[m2])
+    return MOD_ORDER.indexOf(m) <= lastSeen + 1
+  })
+  // Always show at least INPUT
+  if (!stages.includes('INPUT')) stages.push('INPUT')
+
+  // Current stage = last stage with an active (open) session
+  const activeStage = MOD_ORDER.find((m) => sessionMap[m] && !sessionMap[m].end_ts)
+  const inputSession = sessionMap['INPUT']
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{ width: 700, maxWidth: '96vw', gap: 16 }} onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <h2 style={{ margin: 0 }}>Bundle Tracking</h2>
+            <span className={STATUS_CLASS[b.status] || 'badge badge-gray'}>{b.status}</span>
+            {activeStage && (
+              <span className="badge badge-yellow">⚡ {MOD_LABEL[activeStage]}</span>
+            )}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)', fontFamily: 'var(--mono)' }}>{b.id}</div>
+          <div style={{ marginTop: 8, display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: 'var(--text-2)' }}>
+            <span>📦 {b.declared_pieces} pcs declared</span>
+            {b.garment_model && <span>👕 {b.garment_model}{b.size_label ? ` / ${b.size_label}` : ''}</span>}
+            {b.contractor_name && <span>🏭 {b.contractor_name}</span>}
+            {b.line_name && <span>〰 {b.line_name}</span>}
+            {b.assigned_card_number != null && (
+              <span>🃏 Card {fmt(b.assigned_card_number)}{b.assigned_card_label ? ` (${b.assigned_card_label})` : ''}</span>
+            )}
+          </div>
+        </div>
+
+        {/* Stage pipeline */}
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {stages.map((mod, i) => (
+            <StageCard
+              key={mod}
+              session={sessionMap[mod] ? { ...sessionMap[mod], module_type: mod } : null}
+              declared={b.declared_pieces}
+              prev={i > 0 ? sessionMap[stages[i - 1]] : null}
+            />
+          ))}
+        </div>
+
+        {/* Sensor comparison note */}
+        {sessions.length > 0 && (
+          <div style={{
+            background: 'var(--surface-1)', border: '1px solid var(--border-dim)',
+            borderRadius: 6, padding: '10px 14px', fontSize: 11, color: 'var(--text-3)', lineHeight: 1.6,
+          }}>
+            <strong style={{ color: 'var(--text-2)' }}>Sensor counting:</strong>{' '}
+            Each station has two independent sensors — <em>pass</em> (main beam-break count) and <em>cycle</em> (mechanical counter).
+            Discrepancy between them indicates sensor drift or double-counts.
+            Yield between stages shows pieces lost or rejected at each operation.
+          </div>
+        )}
+
+        <div className="modal-actions">
+          <button className="btn-sm" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function BundlesTab() {
   const [bundles, setBundles] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [assignBundle, setAssignBundle] = useState(null)
+  const [trackBundleId, setTrackBundleId] = useState(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -334,6 +540,9 @@ export default function BundlesTab() {
                     {b.created_at ? new Date(b.created_at).toLocaleString() : '—'}
                   </td>
                   <td>
+                    <button className="btn-sm" onClick={() => setTrackBundleId(b.id)}>
+                      Track
+                    </button>
                     {b.status !== 'COMPLETED' && !b.assigned_card_uid && !b.card_uid && (
                       <button className="btn-sm btn-primary" onClick={() => setAssignBundle(b)}>
                         Assign Card
@@ -354,6 +563,9 @@ export default function BundlesTab() {
 
       {assignBundle && (
         <AssignCardModal bundle={assignBundle} onClose={() => setAssignBundle(null)} onDone={handleDone} />
+      )}
+      {trackBundleId && (
+        <BundleTrackModal bundleId={trackBundleId} onClose={() => setTrackBundleId(null)} />
       )}
     </div>
   )

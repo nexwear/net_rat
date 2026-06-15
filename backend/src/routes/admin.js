@@ -380,6 +380,44 @@ router.get('/lines', async (_req, res) => {
 
 // ─── Bundles (admin view with full detail) ──────────────────────────────────
 
+// Single bundle detail + all stage sessions (for tracking modal)
+router.get('/bundles/:bundleId', async (req, res) => {
+  try {
+    const { rows: b } = await query(`
+      SELECT b.*,
+             c.name AS contractor_name, g.style AS garment_model,
+             sz.label AS size_label, l.name AS line_name,
+             card.uid AS assigned_card_uid,
+             card.card_number AS assigned_card_number,
+             card.label AS assigned_card_label
+      FROM bundles b
+      LEFT JOIN contractors c ON c.id = b.contractor_id
+      LEFT JOIN garment_models g ON g.id = b.garment_model_id
+      LEFT JOIN sizes sz ON sz.code = b.size_code
+      LEFT JOIN lines l ON l.id = b.line_id
+      LEFT JOIN cards card ON card.current_bundle_id = b.id
+      WHERE b.id = $1
+    `, [req.params.bundleId]);
+    if (!b.length) return res.status(404).json({ error: 'bundle not found' });
+
+    const { rows: sessions } = await query(`
+      SELECT s.id, s.module_type, s.node_id, s.card_uid,
+             s.start_ts, s.end_ts, s.count_pass, s.count_cycle, s.close_reason
+      FROM sessions s
+      WHERE s.bundle_id = $1
+      ORDER BY
+        CASE s.module_type
+          WHEN 'INPUT' THEN 1 WHEN 'OUTPUT_1' THEN 2
+          WHEN 'OUTPUT_2' THEN 3 ELSE 4 END,
+        s.start_ts ASC
+    `, [req.params.bundleId]);
+
+    res.json({ bundle: b[0], sessions });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/bundles', async (req, res) => {
   try {
     const { rows } = await query(`
