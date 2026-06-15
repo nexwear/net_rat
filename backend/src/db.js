@@ -162,6 +162,7 @@ CREATE INDEX IF NOT EXISTS ota_events_node_ts ON ota_events(node_id, ts DESC);
 
 ALTER TABLE nodes ADD COLUMN IF NOT EXISTS pending_op JSONB;
 ALTER TABLE nodes ADD COLUMN IF NOT EXISTS pending_op_at TIMESTAMPTZ;
+ALTER TABLE nodes ADD COLUMN IF NOT EXISTS label TEXT;
 
 DO $$ BEGIN
   CREATE TYPE user_role AS ENUM (
@@ -226,6 +227,30 @@ ALTER TABLE bundles ADD COLUMN IF NOT EXISTS garment_model_id INT REFERENCES gar
 ALTER TABLE bundles ADD COLUMN IF NOT EXISTS size_code SMALLINT REFERENCES sizes(code);
 ALTER TABLE bundles ADD COLUMN IF NOT EXISTS pickup_at TIMESTAMPTZ;
 ALTER TABLE bundles ADD COLUMN IF NOT EXISTS issued_by INT;
+
+-- Pulses-per-piece calibration, learned per garment style + size + operation.
+-- garment_model_id / size_code use 0 as a "not specified" sentinel so the
+-- primary key never contains NULLs. pulses_per_piece is a rolling average,
+-- reconciled against the OUTPUT_2 ground-truth count when a bundle completes.
+-- Push-notification device tokens (FCM). One row per device; tied to the user
+-- who registered it so we could later scope pushes by role/line.
+CREATE TABLE IF NOT EXISTS device_tokens (
+  token        TEXT PRIMARY KEY,
+  user_id      INT REFERENCES users(id) ON DELETE CASCADE,
+  platform     TEXT,
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ppp_calibration (
+  garment_model_id INT NOT NULL DEFAULT 0,
+  size_code        INT NOT NULL DEFAULT 0,
+  module_type      module_type NOT NULL,
+  pulses_per_piece REAL NOT NULL,
+  sample_count     INT NOT NULL DEFAULT 0,
+  updated_at       TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (garment_model_id, size_code, module_type)
+);
 `;
 
 async function initDb() {

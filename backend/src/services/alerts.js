@@ -1,6 +1,8 @@
 const { query } = require('../db');
+const push = require('./push');
 
 async function raiseAlert(type, { lineId, nodeId, detail, dedupKey, severity = 'MED' } = {}) {
+  let id;
   if (dedupKey) {
     const { rows } = await query(
       `INSERT INTO alerts (type, line_id, node_id, severity, detail, dedup_key)
@@ -9,15 +11,23 @@ async function raiseAlert(type, { lineId, nodeId, detail, dedupKey, severity = '
        RETURNING id`,
       [type, lineId || null, nodeId || null, severity, detail || null, dedupKey]
     );
-    return rows[0]?.id || null;
+    id = rows[0]?.id || null;
+  } else {
+    const { rows } = await query(
+      `INSERT INTO alerts (type, line_id, node_id, severity, detail)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
+      [type, lineId || null, nodeId || null, severity, detail || null]
+    );
+    id = rows[0]?.id || null;
   }
-  const { rows } = await query(
-    `INSERT INTO alerts (type, line_id, node_id, severity, detail)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id`,
-    [type, lineId || null, nodeId || null, severity, detail || null]
-  );
-  return rows[0]?.id || null;
+
+  // Only push for genuinely new alerts (deduped ones return null). Fire-and-
+  // forget so a slow FCM call never blocks ingest.
+  if (id) {
+    push.sendAlert({ id, type, severity, detail, lineId, nodeId }).catch(() => {});
+  }
+  return id;
 }
 
 async function resolveAlert(dedupKey) {

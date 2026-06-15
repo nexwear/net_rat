@@ -16,7 +16,7 @@ router.get('/nodes', async (_req, res) => {
       SELECT
         n.id, n.chip_id, n.module_type, n.status, n.fw_version,
         n.last_seen_at, n.rssi, n.flags, n.line_id, n.created_at,
-        n.pending_op, n.pending_op_at,
+        n.pending_op, n.pending_op_at, n.label,
         h.uptime, h.queue_depth
       FROM nodes n
       LEFT JOIN LATERAL (

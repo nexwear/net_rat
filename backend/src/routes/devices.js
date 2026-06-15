@@ -11,11 +11,11 @@ const router = express.Router();
 
 router.post('/claim', async (req, res) => {
   try {
-    const { chipId, moduleHint } = req.body || {};
+    const { chipId, moduleHint, label } = req.body || {};
     if (!chipId) {
       return res.status(400).json({ error: 'chipId required' });
     }
-    const result = await claimDevice(chipId, moduleHint);
+    const result = await claimDevice(chipId, moduleHint, label);
     res.json(result);
   } catch (err) {
     console.error('claim error', err);

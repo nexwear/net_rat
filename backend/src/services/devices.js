@@ -21,17 +21,20 @@ async function findNodeByToken(token) {
   return rows[0] || null;
 }
 
-async function claimDevice(chipId, moduleHint) {
+async function claimDevice(chipId, moduleHint, label) {
   const existing = await query('SELECT * FROM nodes WHERE chip_id = $1', [chipId]);
   let node;
+  const lbl = label && label.trim() ? label.trim() : null;
 
   if (existing.rowCount > 0) {
     node = existing.rows[0];
     const tempToken = makeToken('tmp');
     await query(
-      `UPDATE nodes SET api_token = $1, status = 'PENDING', module_type = COALESCE($2::module_type, module_type)
+      `UPDATE nodes SET api_token = $1, status = 'PENDING',
+         module_type = COALESCE($2::module_type, module_type),
+         label = COALESCE($4, label)
        WHERE id = $3`,
-      [tempToken, moduleHint || null, node.id]
+      [tempToken, moduleHint || null, node.id, lbl]
     );
     node.api_token = tempToken;
     node.status = 'PENDING';
@@ -40,10 +43,10 @@ async function claimDevice(chipId, moduleHint) {
     const tempToken = makeToken('tmp');
     const mod = moduleHint || 'INPUT';
     const { rows } = await query(
-      `INSERT INTO nodes (id, chip_id, module_type, api_token, status)
-       VALUES ($1, $2, $3::module_type, $4, 'PENDING')
+      `INSERT INTO nodes (id, chip_id, module_type, api_token, status, label)
+       VALUES ($1, $2, $3::module_type, $4, 'PENDING', $5)
        RETURNING *`,
-      [nodeId, chipId, mod, tempToken]
+      [nodeId, chipId, mod, tempToken, lbl]
     );
     node = rows[0];
   }
@@ -115,6 +118,75 @@ async function resolveBundle(cardUid) {
     [cardUid]
   );
   return rows[0]?.current_bundle_id || null;
+}
+
+// ─── Pulses-per-piece (PPP) calibration ──────────────────────────────────────
+// INPUT / OUTPUT_1 estimate pieces as (motor rotations / PPP). PPP is learned
+// per garment style + size + operation and corrected against the OUTPUT_2
+// ground-truth count when a bundle finishes the line.
+
+const DEFAULT_PPP = 400;
+
+// Resolve the best PPP for a bundle's style+size at a given station, falling
+// back: exact (style+size) → style average → global → hard default.
+async function lookupPpp(garmentModelId, sizeCode, moduleType) {
+  const gm = garmentModelId || 0;
+  const size = sizeCode || 0;
+  const { rows } = await query(
+    `SELECT pulses_per_piece
+       FROM ppp_calibration
+      WHERE module_type = $3
+        AND garment_model_id IN ($1, 0)
+        AND size_code IN ($2, 0)
+        AND sample_count > 0
+      ORDER BY (garment_model_id = $1) DESC, (size_code = $2) DESC, sample_count DESC
+      LIMIT 1`,
+    [gm, size, moduleType]
+  );
+  return rows[0]?.pulses_per_piece || DEFAULT_PPP;
+}
+
+// Reconcile PPP using the OUTPUT_2 ground-truth count. For each upstream
+// station that recorded raw rotations (count_cycle) on this bundle, fold
+// rotations/trueCount into the rolling average for its style+size+operation.
+// LEAST(sample_count, 50) caps the window so the estimate stays adaptive.
+async function reconcilePpp(bundleId, trueCount) {
+  if (!bundleId || !trueCount || trueCount <= 0) return;
+
+  const { rows: bRows } = await query(
+    'SELECT garment_model_id, size_code FROM bundles WHERE id = $1',
+    [bundleId]
+  );
+  const bundle = bRows[0];
+  if (!bundle) return;
+  const gm = bundle.garment_model_id || 0;
+  const size = bundle.size_code || 0;
+
+  const { rows: sRows } = await query(
+    `SELECT module_type, count_cycle
+       FROM sessions
+      WHERE bundle_id = $1
+        AND module_type IN ('INPUT','OUTPUT_1')
+        AND count_cycle > 0`,
+    [bundleId]
+  );
+
+  for (const s of sRows) {
+    const sample = s.count_cycle / trueCount;
+    if (!Number.isFinite(sample) || sample <= 0) continue;
+    await query(
+      `INSERT INTO ppp_calibration
+         (garment_model_id, size_code, module_type, pulses_per_piece, sample_count, updated_at)
+       VALUES ($1, $2, $3, $4, 1, NOW())
+       ON CONFLICT (garment_model_id, size_code, module_type) DO UPDATE SET
+         pulses_per_piece =
+           (ppp_calibration.pulses_per_piece * LEAST(ppp_calibration.sample_count, 50) + $4)
+           / (LEAST(ppp_calibration.sample_count, 50) + 1),
+         sample_count = ppp_calibration.sample_count + 1,
+         updated_at = NOW()`,
+      [gm, size, s.module_type, sample]
+    );
+  }
 }
 
 async function checkSeq(nodeId, seq) {
@@ -311,6 +383,8 @@ async function ingestSession(node, body) {
         "UPDATE cards SET status = 'AVAILABLE', current_bundle_id = NULL WHERE uid = $1",
         [cardUid]
       );
+      // OUTPUT_2 is the ground truth — use it to calibrate upstream PPP.
+      await reconcilePpp(bundleId, pass);
     }
   }
 
@@ -394,4 +468,6 @@ module.exports = {
   ingestUnassigned,
   ingestHeartbeat,
   resolveBundle,
+  lookupPpp,
+  reconcilePpp,
 };

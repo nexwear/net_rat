@@ -238,7 +238,12 @@ export default function NodesTab() {
             <tbody>
               {nodes.map((n) => (
                 <tr key={n.id}>
-                  <td className="mono">{n.id}</td>
+                  <td>
+                    {n.label && (
+                      <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 2 }}>{n.label}</div>
+                    )}
+                    <span className="mono" style={{ color: n.label ? 'var(--text-3)' : undefined }}>{n.id}</span>
+                  </td>
                   <td>{n.module_type || '—'}</td>
                   <td className="mono">{n.fw_version || '—'}</td>
                   <td><StatusBadge status={n.status} /></td>

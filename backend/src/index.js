@@ -13,7 +13,9 @@ const offlineWatcher = require('./services/offlineWatcher');
 const broker = require('./services/broker');
 const mqttClient = require('./services/mqttClient');
 const authRoutes = require('./routes/auth');
+const notificationRoutes = require('./routes/notifications');
 const { ensureDefaultAdmin } = require('./services/auth');
+const push = require('./services/push');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -31,6 +33,7 @@ app.use('/v1', statusRoutes);
 app.use('/v1', otaRoutes);
 app.use('/v1', ingestRoutes);
 app.use('/v1/admin', adminRoutes);
+app.use('/v1/notifications', notificationRoutes);
 
 const server = http.createServer(app);
 
@@ -39,6 +42,7 @@ async function start() {
     await initDb();
     await ensureDefaultAdmin();
     ensureFirmwareDir();
+    push.init();
     console.log('Database ready');
   } catch (err) {
     console.error('Database init failed:', err.message);

@@ -1,27 +1,36 @@
 const express = require('express');
 const { query } = require('../db');
-const { resolveBundle } = require('../services/devices');
+const { resolveBundle, lookupPpp } = require('../services/devices');
 
 const router = express.Router();
 
 router.get('/card/:uid', async (req, res) => {
   const uid = req.params.uid.toUpperCase();
+  const module = (req.query.module || '').toUpperCase();
   const bundleId = await resolveBundle(uid);
   if (!bundleId) {
     return res.status(404).json({ error: 'unassigned' });
   }
   const { rows } = await query(
-    'SELECT id, declared_pieces, status FROM bundles WHERE id = $1',
+    'SELECT id, declared_pieces, status, garment_model_id, size_code FROM bundles WHERE id = $1',
     [bundleId]
   );
   const bundle = rows[0];
   if (!bundle) {
     return res.status(404).json({ error: 'bundle not found' });
   }
+
+  // PPP only matters for the rotation-quantum stations (INPUT / OUTPUT_1).
+  let ppp = 0;
+  if (module === 'INPUT' || module === 'OUTPUT_1') {
+    ppp = Math.round(await lookupPpp(bundle.garment_model_id, bundle.size_code, module));
+  }
+
   res.json({
     bundleId: bundle.id,
     declaredPieces: bundle.declared_pieces,
     status: bundle.status,
+    ppp,
   });
 });
 

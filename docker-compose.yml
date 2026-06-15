@@ -27,6 +27,9 @@ services:
       - JWT_SECRET=${JWT_SECRET:-change-me-jwt-secret}
       - SUPER_ADMIN_EMAIL=${SUPER_ADMIN_EMAIL:-admin@nexwear.io}
       - SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD:-Nexwear@2025}
+      # FCM (optional): set FIREBASE_SERVICE_ACCOUNT in .env or mount a JSON file
+      - FIREBASE_SERVICE_ACCOUNT=${FIREBASE_SERVICE_ACCOUNT:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
     depends_on:
       - postgres
       - mosquitto
