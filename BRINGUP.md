@@ -2,6 +2,25 @@
 
 End-to-end test after flashing firmware. Requires Docker (postgres + backend).
 
+## Cloud (EC2 `15.206.16.137`)
+
+| Service | URL |
+|---------|-----|
+| API (via nginx) | `http://15.206.16.137/api` |
+| Health | `http://15.206.16.137/api` → backend `/health` via direct `:4000` on server |
+| OTA public base | `http://15.206.16.137/api` (`OTA_PUBLIC_BASE_URL`) |
+
+**Provision nodes** with server URL: `http://15.206.16.137/api`
+
+**Publish OTA to cloud:**
+
+```powershell
+cd E:\netrat\scripts
+.\publish-ota.ps1 -Version 1.0.9 -ApiBase "http://15.206.16.137/api" -RolloutPct 100
+```
+
+**GitHub deploy:** set repo secret `EC2_HOST` = `15.206.16.137`. Push to `main` runs `.github/workflows/deploy.yml`.
+
 ## 1. Start backend
 
 ```powershell
@@ -19,7 +38,7 @@ Check: `curl http://localhost:4000/health`
 3. Connect phone/laptop to SoftAP **`Grewbie-INPUT-xxxx`** (password `grewbie-setup`)
 4. Captive portal → enter WiFi + server URL:
    - Direct: `http://<pc-lan-ip>:4000`
-   - Via nginx: `http://<ec2-ip>/api` (paths become `/api/v1/...`)
+   - Cloud: `http://15.206.16.137/api`
 5. Node reboots; serial should show `[OTA] Ready` and heartbeats every 15s
 
 `AUTO_APPROVE_DEVICES=true` auto-activates claims — no manual approve needed.

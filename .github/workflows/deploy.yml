@@ -19,7 +19,13 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            set -e
             cd /opt/app
             git pull origin main
+            mkdir -p backend/firmware
             docker compose up -d --build
-            docker system prune -f
+            echo "Waiting for backend..."
+            sleep 15
+            curl -sf http://127.0.0.1:4000/health
+            echo "Deploy OK"
+            docker image prune -f

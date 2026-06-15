@@ -19,7 +19,7 @@ String portalPage() {
 <form method=POST action=/config>
 <label>WiFi SSID <input name=ssid required></label><br>
 <label>Password <input name=pass type=password></label><br>
-<label>Server URL <input name=server value="http://192.168.1.100:4000"></label><br>
+<label>Server URL <input name=server value="http://15.206.16.137/api"></label><br>
 <label>Module <select name=module>
 <option>INPUT</option><option>OUTPUT_1</option><option>OUTPUT_2</option><option>ADMIN</option>
 </select></label><br>

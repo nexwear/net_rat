@@ -22,6 +22,7 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - MQTT_HOST=mosquitto
       - AUTO_APPROVE_DEVICES=true
+      - OTA_PUBLIC_BASE_URL=http://15.206.16.137/api
     depends_on:
       - postgres
       - mosquitto
@@ -30,7 +31,7 @@ services:
   frontend:
     build: ./frontend
     environment:
-      - NEXT_PUBLIC_API_URL=http://YOUR_EC2_IP/api
+      - NEXT_PUBLIC_API_URL=http://15.206.16.137/api
     restart: always
 
   postgres:
