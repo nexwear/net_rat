@@ -288,3 +288,17 @@ Provisioning::Result Provisioning::runWifiOnly(DeviceConfig& cfg, ModuleType hin
 }
 
 void Provisioning::factoryReset() { ConfigStore::wipe(); }
+
+bool Provisioning::reclaim(DeviceConfig& cfg) {
+  if (cfg.wifi.empty() || cfg.serverUrl.length() == 0) {
+    return false;
+  }
+  cfg.nodeId = "";
+  cfg.token = "";
+  const ModuleType hint = moduleTypeFromString(cfg.moduleType.c_str());
+  if (!claimDevice(cfg, hint) || !pollUntilApproved(cfg)) {
+    return false;
+  }
+  cfg.fwVersion = String(FW_VERSION);
+  return ConfigStore::save(cfg);
+}

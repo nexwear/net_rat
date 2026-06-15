@@ -97,20 +97,28 @@ bool TelemetrySender::send(const TelemetryEvent& ev) {
       if (adminAssign) {
         String resp;
         ok = postJsonWithResponse("/v1/scan", body, resp);
-        if (ok && _commandQ != nullptr && resp.length() > 0) {
-          JsonDocument respDoc;
-          if (deserializeJson(respDoc, resp) == DeserializationError::Ok) {
-            const uint32_t cardNum = respDoc["cardNumber"] | 0;
-            if (cardNum > 0) {
-              Command cmd{};
-              cmd.type = CmdType::ADMIN_SCAN_FEEDBACK;
-              cmd.cardNumber = cardNum;
+        if (_commandQ != nullptr) {
+          Command cmd{};
+          cmd.type = CmdType::ADMIN_SCAN_FEEDBACK;
+          if (ok && resp.length() > 0) {
+            JsonDocument respDoc;
+            if (deserializeJson(respDoc, resp) == DeserializationError::Ok) {
+              cmd.cardNumber = respDoc["cardNumber"] | 0;
               cmd.newlyRegistered = respDoc["newlyRegistered"] | false;
-              xQueueSend(_commandQ, &cmd, 0);
-              Serial.printf("[ADMIN] #%03lu %s uid=%s\n", cardNum,
-                            cmd.newlyRegistered ? "registered" : "already registered", ev.cardUid);
+              if (respDoc["ignored"] | false) {
+                Serial.printf("[ADMIN] scan ignored (open Cards or Bundles admin panel) uid=%s\n",
+                              ev.cardUid);
+              } else if (respDoc["unregistered"] | false) {
+                Serial.printf("[ADMIN] card not registered uid=%s\n", ev.cardUid);
+              } else if (cmd.cardNumber > 0) {
+                Serial.printf("[ADMIN] #%03lu %s uid=%s\n", cmd.cardNumber,
+                              cmd.newlyRegistered ? "registered" : "already registered", ev.cardUid);
+              }
             }
+          } else {
+            Serial.printf("[ADMIN] scan post failed uid=%s\n", ev.cardUid);
           }
+          xQueueSend(_commandQ, &cmd, 0);
         }
       } else {
         ok = postJson("/v1/scan", body);

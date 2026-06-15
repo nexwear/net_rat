@@ -66,13 +66,13 @@ const ALL_TABS = [
     key:  'bundles',
     label: 'Bundles',
     icon:  IC.bundles,
-    help:  'A bundle is a batch of garments moving through the line. Create one (with contractor), then tap a card on the **admin room reader** to assign it — admin scans are only for card→bundle assignment, not line counting.',
+    help:  'Create bundles with a contractor, then open **Assign Card → Admin reader** to link a **registered** card to the bundle. The reader only assigns existing cards here — register new cards on the Cards tab.',
   },
   {
     key:  'cards',
     label: 'Cards',
     icon:  IC.cards,
-    help:  'Register NFC cards with a friendly number (001, 002…). Use **Scan Mode** with a USB desktop reader to register cards. Card assignment to bundles is done on the **admin room NFC reader** in the Bundles tab.',
+    help:  'Register NFC cards (**Scan & Assign** or Register Card → Admin reader). The admin reader auto-numbers cards only while this tab is in register mode. Bundle assignment is on the Bundles tab.',
   },
   {
     key:  'ota',

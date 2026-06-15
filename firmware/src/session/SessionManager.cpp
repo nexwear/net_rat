@@ -104,7 +104,8 @@ void SessionManager::snapshotBaselines() {
   }
 }
 
-void SessionManager::emit(TelemetryType type, ScanKind scanKind, CloseReason reason) {
+void SessionManager::emit(TelemetryType type, ScanKind scanKind, CloseReason reason,
+                          const char* cardUidOverride) {
   TelemetryEvent ev{};
   ev.type = type;
   generateUuid(ev.eventId);
@@ -112,7 +113,11 @@ void SessionManager::emit(TelemetryType type, ScanKind scanKind, CloseReason rea
   if ((_seqCounter != nullptr) && (*_seqCounter % 32 == 0)) {
     ConfigStore::saveSeq(*_seqCounter);
   }
-  strncpy(ev.cardUid, _activeCardUid, sizeof(ev.cardUid) - 1);
+  if (cardUidOverride && cardUidOverride[0] != '\0') {
+    strncpy(ev.cardUid, cardUidOverride, sizeof(ev.cardUid) - 1);
+  } else {
+    strncpy(ev.cardUid, _activeCardUid, sizeof(ev.cardUid) - 1);
+  }
   strncpy(ev.sessionId, _sessionId, sizeof(ev.sessionId) - 1);
   ev.countPass = passCount();
   ev.countCycle = cycleCount();
@@ -241,7 +246,9 @@ void SessionManager::onTap(const char* cardUid, ScanKind kindOverride) {
   const bool admin = moduleTypeFromString(_cfg.moduleType) == ModuleType::ADMIN;
 
   if (admin) {
-    emit(TelemetryType::SCAN, ScanKind::ASSIGN_SCAN);
+    emit(TelemetryType::SCAN, ScanKind::ASSIGN_SCAN, CloseReason::TIMEOUT, cardUid);
+    strncpy(_lastTapUid, cardUid, sizeof(_lastTapUid) - 1);
+    _lastTapMs = now;
     return;
   }
 

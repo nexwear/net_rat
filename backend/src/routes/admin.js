@@ -1,7 +1,11 @@
 const express = require('express');
 const { query } = require('../db');
-const { approveDevice, ensureCardRegistered } = require('../services/devices');
+const { approveDevice, ensureCardRegistered, lookupCard } = require('../services/devices');
 const { listAlerts, ackAlert } = require('../services/alerts');
+const {
+  getAdminReaderStatus,
+  setAdminReaderMode,
+} = require('../services/adminReaderMode');
 const { jwtAuth, requirePerm } = require('../middleware/rbac');
 
 const router = express.Router();
@@ -607,6 +611,22 @@ router.post('/bundles', async (req, res) => {
   }
 });
 
+// ─── Admin NFC reader mode (Cards register vs Bundles assign) ────────────────
+
+router.get('/admin-reader/mode', async (_req, res) => {
+  res.json(getAdminReaderStatus());
+});
+
+router.post('/admin-reader/mode', async (req, res) => {
+  try {
+    const { mode } = req.body || {};
+    const result = setAdminReaderMode(mode, req.user?.id ?? req.user?.email ?? null);
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
 // ─── Card assignment ─────────────────────────────────────────────────────────
 
 router.post('/bundles/:bundleId/assign-card', async (req, res) => {
@@ -629,8 +649,12 @@ router.post('/bundles/:bundleId/assign-card', async (req, res) => {
 
     if (!uid) return res.status(400).json({ error: 'cardUid or cardNumber required' });
 
-    const card = await ensureCardRegistered(uid);
-    if (!card) return res.status(400).json({ error: 'invalid card uid' });
+    const card = await lookupCard(uid);
+    if (!card) {
+      return res.status(404).json({
+        error: 'Card not registered — register it on the Cards tab first',
+      });
+    }
 
     const { bundleId } = req.params;
     const { rows: bundles } = await query('SELECT id FROM bundles WHERE id = $1', [bundleId]);

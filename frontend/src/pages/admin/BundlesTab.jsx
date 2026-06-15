@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { API_BASE, adminHeaders } from './AdminPage.jsx'
 import { AdminReaderBanner } from './CardsTab.jsx'
+import { useAdminReaderMode } from './useAdminReaderMode.js'
 
 const STATUS_CLASS = {
   ISSUED: 'badge badge-gray',
@@ -149,6 +150,7 @@ function AssignCardModal({ bundle, onClose, onDone }) {
   const [waitingTap, setWaitingTap] = useState(true)
   const [lastTap, setLastTap] = useState(null)
   const seenScanRef = useRef(new Set())
+  useAdminReaderMode(mode === 'admin' && waitingTap ? 'BUNDLE' : 'IDLE')
 
   useEffect(() => {
     fetch(`${API_BASE}/v1/admin/cards/available`, { headers: adminHeaders() })
@@ -197,6 +199,11 @@ function AssignCardModal({ bundle, onClose, onDone }) {
         for (const s of scans) {
           if (!s.event_id || !s.card_uid || seenScanRef.current.has(s.event_id)) continue
           seenScanRef.current.add(s.event_id)
+          if (s.card_number == null) {
+            setError('Card not registered — register it on the Cards tab first')
+            setWaitingTap(true)
+            return
+          }
           setLastTap({
             uid: s.card_uid,
             cardNumber: s.card_number,
@@ -279,7 +286,7 @@ function AssignCardModal({ bundle, onClose, onDone }) {
               </span>
             </div>
             <p style={{ fontSize: 12, color: 'var(--text-3)', margin: 0, lineHeight: 1.5 }}>
-              Tap the NFC card on the <strong>admin room reader</strong>. This scan is only used to link the card to this bundle — it does not start a production session.
+              Tap a <strong>registered</strong> NFC card on the admin reader to link it to this bundle (contractor is set on the bundle). Unregistered cards are ignored — register them on the Cards tab first.
             </p>
             <div style={{ marginTop: 10 }}>
               <AdminReaderBanner />

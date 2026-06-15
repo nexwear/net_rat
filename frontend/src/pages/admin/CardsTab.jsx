@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { API_BASE, adminHeaders } from './AdminPage.jsx'
+import { useAdminReaderMode } from './useAdminReaderMode.js'
 
 function fmt(n) {
   return n != null ? String(n).padStart(3, '0') : '—'
@@ -20,6 +21,7 @@ function RegisterModal({ nextNumber, cards, initialUid, onClose, onDone, onRefre
   const inputRef = useRef(null)
   const seenScanRef = useRef(new Set())
   const [mode, setMode] = useState(initialUid ? 'manual' : 'scan') // scan | admin | manual
+  useAdminReaderMode(mode === 'admin' ? 'REGISTER' : 'IDLE')
   const [uid, setUid]     = useState(initialUid || '')
   const [num, setNum]     = useState(String(nextNumber || ''))
   const [label, setLabel] = useState('')
@@ -238,6 +240,7 @@ function ScanLookupBar({ cards, onHighlight, onRegister }) {
   const inputRef = useRef(null)
   const seenScanRef = useRef(new Set())
   const [mode, setMode] = useState('usb') // usb | admin
+  useAdminReaderMode(mode === 'admin' ? 'BUNDLE' : 'IDLE')
   const [uid, setUid] = useState('')
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
@@ -625,6 +628,7 @@ function AutoAssignPanel({ cards, nextNumber, onRegistered }) {
   const seenRef = useRef(new Set())
   const usbRef = useRef(null)
   const [source, setSource] = useState('admin') // admin | usb
+  useAdminReaderMode(source === 'admin' ? 'REGISTER' : 'IDLE')
   const [usbUid, setUsbUid] = useState('')
   const [last, setLast] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -743,7 +747,7 @@ function AutoAssignPanel({ cards, nextNumber, onRegistered }) {
               Scan &amp; Assign — hold card on reader
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
-              Each tap reads the UID and assigns the next number ({fmt(nextNumber)}, {fmt(nextNumber + 1)}…). Already registered cards show their existing number.
+              Each tap reads the UID and assigns the next number ({fmt(nextNumber)}, {fmt(nextNumber + 1)}…). Only active while this panel is open — register mode on the server.
             </div>
           </div>
         </div>

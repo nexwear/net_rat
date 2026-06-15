@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { query } = require('../db');
 const { raiseAlert } = require('./alerts');
+const { getAdminReaderMode } = require('./adminReaderMode');
 
 function makeToken(prefix = 'tok') {
   return `${prefix}_${crypto.randomBytes(24).toString('hex')}`;
@@ -152,6 +153,53 @@ async function ensureCardRegistered(cardUid) {
     [uid, num]
   );
   return { ...ins[0], newlyRegistered: true };
+}
+
+/** Lookup only — never inserts (bundle assign / card lookup UI). */
+async function lookupCard(cardUid) {
+  const uid = (cardUid || '').trim().toUpperCase();
+  if (!uid) return null;
+
+  const { rows } = await query(
+    'SELECT uid, card_number, label, status, current_bundle_id FROM cards WHERE uid = $1',
+    [uid]
+  );
+  if (rows.length === 0) return null;
+  return { ...rows[0], newlyRegistered: false };
+}
+
+async function resolveAssignScanCard(cardUid) {
+  const mode = getAdminReaderMode();
+  if (mode === 'REGISTER') {
+    return {
+      mode,
+      ignored: false,
+      unregistered: false,
+      cardInfo: await ensureCardRegistered(cardUid),
+    };
+  }
+  if (mode === 'BUNDLE') {
+    const cardInfo = await lookupCard(cardUid);
+    return {
+      mode,
+      ignored: false,
+      unregistered: !cardInfo,
+      cardInfo,
+    };
+  }
+  return { mode: 'IDLE', ignored: true, unregistered: false, cardInfo: null };
+}
+
+function assignScanResponse(cardUid, cardInfo, extra = {}) {
+  return {
+    ok: true,
+    cardUid: cardUid || cardInfo?.uid || null,
+    cardNumber: cardInfo?.card_number ?? null,
+    cardStatus: cardInfo?.status ?? null,
+    cardLabel: cardInfo?.label ?? null,
+    newlyRegistered: cardInfo?.newlyRegistered ?? false,
+    ...extra,
+  };
 }
 
 // ─── Pulses-per-piece (PPP) calibration ──────────────────────────────────────
@@ -320,22 +368,29 @@ async function ingestScan(node, body) {
   const dup = await query('SELECT 1 FROM scan_events WHERE event_id = $1', [eventId]);
   if (dup.rowCount > 0) {
     if (kind === 'ASSIGN_SCAN' && cardUid) {
-      const info = await ensureCardRegistered(cardUid);
-      return {
+      const resolved = await resolveAssignScanCard(cardUid);
+      return assignScanResponse(cardUid, resolved.cardInfo, {
         duplicate: true,
-        ok: true,
-        cardUid,
-        cardNumber: info?.card_number ?? null,
-        cardStatus: info?.status ?? null,
+        mode: resolved.mode,
+        ignored: resolved.ignored,
+        unregistered: resolved.unregistered,
         newlyRegistered: false,
-      };
+      });
     }
     return { duplicate: true };
   }
 
   let cardInfo = null;
+  let assignMeta = { mode: 'IDLE', ignored: false, unregistered: false };
   if (kind === 'ASSIGN_SCAN' && cardUid) {
-    cardInfo = await ensureCardRegistered(cardUid);
+    const resolved = await resolveAssignScanCard(cardUid);
+    cardInfo = resolved.cardInfo;
+    assignMeta = resolved;
+    if (resolved.ignored) {
+      console.log(`assign scan ignored (reader IDLE): uid=${cardUid} node=${node.id}`);
+    } else if (resolved.unregistered) {
+      console.log(`assign scan unregistered card: uid=${cardUid} node=${node.id}`);
+    }
   }
 
   const bundleId = cardInfo?.current_bundle_id || (await resolveBundle(cardUid));
@@ -397,16 +452,13 @@ async function ingestScan(node, body) {
     }
   }
 
-  return {
-    ok: true,
+  return assignScanResponse(cardUid, cardInfo, {
     bundleId,
     sessionId,
-    cardUid: cardUid || cardInfo?.uid,
-    cardNumber: cardInfo?.card_number ?? null,
-    cardStatus: cardInfo?.status ?? null,
-    cardLabel: cardInfo?.label ?? null,
-    newlyRegistered: cardInfo?.newlyRegistered ?? false,
-  };
+    mode: assignMeta.mode,
+    ignored: assignMeta.ignored,
+    unregistered: assignMeta.unregistered,
+  });
 }
 
 async function ingestSession(node, body) {
@@ -562,6 +614,7 @@ module.exports = {
   ingestHeartbeat,
   resolveBundle,
   ensureCardRegistered,
+  lookupCard,
   lookupPpp,
   reconcilePpp,
 };

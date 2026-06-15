@@ -74,6 +74,7 @@ void sensingLoop(void* param) {
         sessions.setPpp(cmd.ppp);
         sessions.setDeclaredPieces(cmd.declaredPieces);
       } else if (cmd.type == CmdType::ADMIN_SCAN_FEEDBACK) {
+        nfc.readyForNextAssign();
         if (cmd.cardNumber > 0) {
           buzzer.play(cmd.newlyRegistered ? BuzzPattern::ADMIN_NEW : BuzzPattern::ADMIN_EXISTS);
           adminLedUntilMs = millis() + (cmd.newlyRegistered ? 450U : 250U);

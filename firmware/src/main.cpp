@@ -68,6 +68,19 @@ void loop() {
       Provisioning::factoryReset();
       delay(200);
       ESP.restart();
+    } else if (line == "RECLAIM") {
+      DeviceConfig cur;
+      if (!ConfigStore::load(cur) || cur.wifi.empty()) {
+        SerialCfg::printErr("not provisioned");
+      } else {
+        Serial.println("[CFG] RECLAIM — registering with server");
+        if (Provisioning::reclaim(cur)) {
+          gConfig = cur;
+          SerialCfg::printOk("reclaimed");
+        } else {
+          SerialCfg::printErr("reclaim failed");
+        }
+      }
     } else if (line.startsWith("CFG ")) {
       DeviceConfig cur;
       ConfigStore::load(cur);  // preserve token / nodeId / line / factory

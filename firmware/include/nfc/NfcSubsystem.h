@@ -11,7 +11,15 @@ class NfcSubsystem {
   bool begin();
   void pollRead();
   void onTap(TapCallback cb) { _onTap = cb; }
-  void setAssignMode(bool enabled) { _assignMode = enabled; }
+  void setAssignMode(bool enabled) {
+    _assignMode = enabled;
+    if (enabled) {
+      _assignArmed = true;
+      _lastUid[0] = '\0';
+    }
+  }
+  /** After admin scan completes — allow the next card without a full removal cycle. */
+  void readyForNextAssign();
   bool healthy() const { return _healthy; }
 
  private:
@@ -26,6 +34,7 @@ class NfcSubsystem {
   bool _initialized = false;
   bool _healthy = false;
   bool _assignMode = false;
+  bool _assignArmed = true;
   bool _cardPresent = false;
   uint8_t _failStreak = 0;
   uint8_t _absentStreak = 0;
@@ -35,11 +44,12 @@ class NfcSubsystem {
   uint32_t _quietUntilMs = 0;
   char _lastUid[24] = "";
 
-  static constexpr uint32_t POLL_INTERVAL_MS = 150;
+  static constexpr uint32_t POLL_INTERVAL_MS = 120;
   static constexpr uint32_t ABSENT_CHECK_MS = 300;
-  static constexpr uint32_t ASSIGN_ABSENT_CHECK_MS = 200;
   static constexpr uint32_t POST_READ_QUIET_MS = 1000;
   static constexpr uint32_t TAP_GLITCH_MS = 300;
+  static constexpr uint32_t ASSIGN_SAME_UID_MS = 800;
+  static constexpr uint32_t ASSIGN_REARM_MS = 1500;
   static constexpr uint8_t ABSENT_DEBOUNCE_POLLS = 2;
-  static constexpr uint8_t ASSIGN_ABSENT_DEBOUNCE_POLLS = 3;
+  static constexpr uint8_t ASSIGN_ABSENT_DEBOUNCE_POLLS = 2;
 };

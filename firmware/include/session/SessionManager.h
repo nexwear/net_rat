@@ -54,7 +54,8 @@ class SessionManager {
   void snapshotBaselines();
   void openSession(const char* cardUid, ScanKind kind);
   void closeSession(CloseReason reason, ScanKind scanKind = ScanKind::AUTO_CLOSE);
-  void emit(TelemetryType type, ScanKind scanKind = ScanKind::TAP_IN, CloseReason reason = CloseReason::TIMEOUT);
+  void emit(TelemetryType type, ScanKind scanKind = ScanKind::TAP_IN, CloseReason reason = CloseReason::TIMEOUT,
+            const char* cardUidOverride = nullptr);
   bool deltaChangedBy(uint32_t k);
   uint32_t unassignedPassCount() const;
   uint32_t unassignedCycleCount() const;

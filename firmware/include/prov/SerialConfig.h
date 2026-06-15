@@ -8,6 +8,7 @@
 //   CFG {"ssid":"..","pass":"..","server":"http://..","module":"INPUT","label":".."}
 //   STATUS
 //   RESET
+//   RECLAIM   re-register with server (keeps WiFi creds; use after DB wipe)
 //
 // The node answers with single-line JSON tagged with a prefix the host parses:
 //   OK {"applied":true}            after a CFG is accepted

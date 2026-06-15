@@ -115,10 +115,28 @@ bool NfcSubsystem::readUid(char out[24]) {
   }
 
   out[0] = '\0';
+  // Admin desk tags are often ISO15693 — try that first in assign mode.
+  if (_assignMode) {
+    if (readUid15693(out)) {
+      return true;
+    }
+    return readUid14443(out);
+  }
   if (readUid14443(out)) {
     return true;
   }
   return readUid15693(out);
+}
+
+void NfcSubsystem::readyForNextAssign() {
+  _cardPresent = false;
+  _absentStreak = 0;
+  _assignArmed = true;
+  _lastUid[0] = '\0';
+  if (gIso14443) {
+    gIso14443->reset();
+  }
+  Serial.println("[NFC] ready for next card");
 }
 
 void NfcSubsystem::emitTap(const char* uid) {
@@ -126,13 +144,20 @@ void NfcSubsystem::emitTap(const char* uid) {
     return;
   }
   const uint32_t now = millis();
-  if (strcmp(uid, _lastUid) == 0 && (now - _lastTapMs) < TAP_GLITCH_MS) {
+  const uint32_t debounceMs = _assignMode ? ASSIGN_SAME_UID_MS : TAP_GLITCH_MS;
+  if (strcmp(uid, _lastUid) == 0 && (now - _lastTapMs) < debounceMs) {
     return;
   }
   strncpy(_lastUid, uid, sizeof(_lastUid) - 1);
   _lastTapMs = now;
   Serial.printf("[NFC] tap uid=%s\n", uid);
   _onTap(uid);
+  if (_assignMode) {
+    _cardPresent = false;
+    _absentStreak = 0;
+    _assignArmed = false;
+    _lastPollMs = millis();
+  }
 }
 
 void NfcSubsystem::pollRead() {
@@ -145,31 +170,29 @@ void NfcSubsystem::pollRead() {
   char uid[24] = "";
 
   if (_assignMode) {
+    if (!_assignArmed) {
+      if ((now - _lastTapMs) >= ASSIGN_REARM_MS) {
+        readyForNextAssign();
+      } else {
+        return;
+      }
+    }
+
     const bool present = readUid(uid);
     if (present && uid[0] != '\0') {
-      if (!_cardPresent) {
-        _cardPresent = true;
-        emitTap(uid);
-      } else if (strcmp(uid, _lastUid) != 0) {
-        emitTap(uid);
-      }
+      emitTap(uid);
       _absentStreak = 0;
       return;
     }
 
-    if (_cardPresent) {
-      if (++_absentStreak >= ASSIGN_ABSENT_DEBOUNCE_POLLS) {
-        _cardPresent = false;
-        _absentStreak = 0;
-        _lastUid[0] = '\0';
-        Serial.println("[NFC] card removed — ready for next tap");
-      }
-    } else {
+    if (++_absentStreak >= ASSIGN_ABSENT_DEBOUNCE_POLLS) {
       _absentStreak = 0;
-      if ((now - _lastIdleLogMs) > 30000) {
-        _lastIdleLogMs = now;
-        Serial.println("[NFC] admin reader listening — present card");
-      }
+      _cardPresent = false;
+    }
+
+    if ((now - _lastIdleLogMs) > 30000) {
+      _lastIdleLogMs = now;
+      Serial.println("[NFC] admin reader listening — present card");
     }
     return;
   }
@@ -211,7 +234,7 @@ void NfcSubsystem::pollRead() {
 
 uint32_t NfcSubsystem::pollIntervalMs() const {
   if (_assignMode) {
-    return _cardPresent ? ASSIGN_ABSENT_CHECK_MS : POLL_INTERVAL_MS;
+    return POLL_INTERVAL_MS;
   }
   return _cardPresent ? ABSENT_CHECK_MS : POLL_INTERVAL_MS;
 }

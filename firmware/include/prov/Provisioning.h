@@ -11,6 +11,8 @@ class Provisioning {
   static Result runWifiOnly(DeviceConfig& cfg, ModuleType hint = ModuleType::MOD_INPUT);
   static void factoryReset();
   static String apName(ModuleType hint);
+  /** Re-register with server after DB wipe; keeps WiFi creds in cfg. */
+  static bool reclaim(DeviceConfig& cfg);
 
  private:
   static bool startSoftAp(ModuleType hint);
