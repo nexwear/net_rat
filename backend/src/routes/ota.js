@@ -13,6 +13,8 @@ const {
   ensureFirmwareDir,
 } = require('../services/ota');
 
+const { jwtAuth } = require('../middleware/rbac');
+
 const router = express.Router();
 
 async function deviceAuth(req, res, next) {
@@ -25,13 +27,8 @@ async function deviceAuth(req, res, next) {
   next();
 }
 
-function adminAuth(req, res, next) {
-  const secret = process.env.ADMIN_SECRET;
-  if (secret && req.get('Authorization') !== `Bearer ${secret}`) {
-    return res.status(401).json({ error: 'admin auth required' });
-  }
-  next();
-}
+// jwtAuth already handles ADMIN_SECRET bearer as SUPER_ADMIN fallback
+const adminAuth = jwtAuth;
 
 router.post('/ota/check', deviceAuth, async (req, res) => {
   try {

@@ -34,7 +34,7 @@ function UploadPanel({ onUploaded }) {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/octet-stream',
-          Authorization: `Bearer ${import.meta.env.VITE_ADMIN_SECRET || ''}`,
+          ...adminHeaders(),
         },
         body: file,
       })
