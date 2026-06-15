@@ -155,7 +155,7 @@ function RolloutRow({ release, nodeCount, onUpdated }) {
           {release.paused ? 'Resume' : 'Pause'}
         </button>
       </td>
-      <td>{nodeCount > 0 ? <span className="badge-green">{nodeCount} node{nodeCount !== 1 ? 's' : ''}</span> : '—'}</td>
+      <td>{nodeCount > 0 ? <span className="badge badge-green">{nodeCount} node{nodeCount !== 1 ? 's' : ''}</span> : <span style={{color:'var(--text-3)'}}>—</span>}</td>
       <td>{timeSince(release.created_at)}</td>
     </tr>
   )

@@ -1,29 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
 import { API_BASE, adminHeaders } from './AdminPage.jsx'
 
-const STATUS_COLORS = {
-  ISSUED: '#7a8bb0',
-  IN_PROGRESS: '#e59f00',
-  COMPLETED: '#2caa4a',
-  LOST: '#c44',
+const STATUS_CLASS = {
+  ISSUED: 'badge badge-gray',
+  IN_PROGRESS: 'badge badge-yellow',
+  COMPLETED: 'badge badge-green',
+  LOST: 'badge badge-red',
 }
 
 function StatusBadge({ status }) {
-  return (
-    <span
-      style={{
-        background: STATUS_COLORS[status] || '#888',
-        color: '#fff',
-        borderRadius: 4,
-        padding: '2px 7px',
-        fontSize: 11,
-        fontWeight: 700,
-        letterSpacing: 0.5,
-      }}
-    >
-      {status}
-    </span>
-  )
+  return <span className={STATUS_CLASS[status] || 'badge badge-gray'}>{status}</span>
 }
 
 function CreateBundlePanel({ onCreated }) {

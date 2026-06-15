@@ -11,28 +11,15 @@ function timeSince(ts) {
   return `${Math.floor(sec / 3600)}h ago`
 }
 
+const STATUS_CLASS = {
+  PENDING: 'badge badge-yellow',
+  ACTIVE: 'badge badge-green',
+  OFFLINE: 'badge badge-gray',
+  DECOMMISSIONED: 'badge badge-red',
+}
+
 function StatusBadge({ status }) {
-  const colors = {
-    PENDING: '#e59f00',
-    ACTIVE: '#2caa4a',
-    OFFLINE: '#888',
-    DECOMMISSIONED: '#c44',
-  }
-  return (
-    <span
-      style={{
-        background: colors[status] || '#888',
-        color: '#fff',
-        borderRadius: 4,
-        padding: '2px 7px',
-        fontSize: 11,
-        fontWeight: 700,
-        letterSpacing: 0.5,
-      }}
-    >
-      {status}
-    </span>
-  )
+  return <span className={STATUS_CLASS[status] || 'badge badge-gray'}>{status}</span>
 }
 
 function ApproveModal({ node, onClose, onDone }) {

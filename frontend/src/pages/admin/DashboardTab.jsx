@@ -33,10 +33,23 @@ function rssiIcon(rssi) {
   return '▂'
 }
 
-const HEALTH_COLOR = { active: '#2caa4a', stale: '#e59f00', offline: '#c44' }
-const MOD_LABEL = { INPUT: 'IN', OUTPUT_1: 'OUT1', OUTPUT_2: 'OUT2', ADMIN: 'ADM' }
+const HEALTH_COLOR = {
+  active:  'var(--success)',
+  stale:   'var(--warning)',
+  offline: 'var(--danger)',
+}
+const MOD_LABEL = { INPUT: 'INPUT', OUTPUT_1: 'OUT 1', OUTPUT_2: 'OUT 2', ADMIN: 'ADMIN' }
 const MOD_BG = {
-  INPUT: '#1a3a6a', OUTPUT_1: '#2d1a5a', OUTPUT_2: '#3a1a2a', ADMIN: '#1a3a2a',
+  INPUT:    'rgba(59,130,246,0.1)',
+  OUTPUT_1: 'rgba(139,92,246,0.1)',
+  OUTPUT_2: 'rgba(236,72,153,0.1)',
+  ADMIN:    'rgba(6,182,212,0.1)',
+}
+const MOD_COLOR = {
+  INPUT:    'var(--brand)',
+  OUTPUT_1: '#8b5cf6',
+  OUTPUT_2: '#ec4899',
+  ADMIN:    'var(--factory)',
 }
 
 // ─── Node tile ────────────────────────────────────────────────────────────────
@@ -50,25 +63,25 @@ function NodeTile({ node }) {
 
   return (
     <div style={{
-      border: `1px solid #2a2d3a`,
+      border: `1px solid var(--border)`,
       borderLeft: `3px solid ${dot}`,
-      borderRadius: 6,
-      padding: '10px 12px',
-      minWidth: 170,
-      maxWidth: 220,
-      flex: '1 1 170px',
-      background: '#13151f',
+      borderRadius: 8,
+      padding: '12px 14px',
+      minWidth: 180,
+      maxWidth: 240,
+      flex: '1 1 180px',
+      background: 'var(--surface)',
       display: 'flex',
       flexDirection: 'column',
-      gap: 6,
+      gap: 8,
     }}>
       {/* header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{
-          background: MOD_BG[node.moduleType] || '#1a1d27',
-          color: '#c8d0f0',
+          background: MOD_BG[node.moduleType] || 'var(--surface-1)',
+          color: MOD_COLOR[node.moduleType] || 'var(--text-2)',
           borderRadius: 4,
-          padding: '1px 6px',
+          padding: '2px 7px',
           fontSize: 10,
           fontWeight: 700,
           letterSpacing: 0.5,
@@ -77,62 +90,66 @@ function NodeTile({ node }) {
         </span>
         <span style={{ flex: 1 }} />
         <span style={{ fontSize: 10, color: dot, fontWeight: 700 }}>●</span>
-        <span style={{ fontSize: 10, color: '#7a8bb0' }}>{rssiIcon(node.rssi)}</span>
+        <span style={{ fontSize: 10, color: 'var(--text-3)', fontFamily: 'var(--mono)' }}>
+          {rssiIcon(node.rssi)}
+        </span>
       </div>
 
       {/* node id */}
-      <div style={{ fontFamily: 'monospace', fontSize: 10, color: '#556' }}>
+      <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-3)' }}>
         {node.nodeId}
       </div>
 
       {/* session */}
       {node.session ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 2 }}>
-          <div style={{ fontSize: 11, color: '#aab', display: 'flex', gap: 4, alignItems: 'center' }}>
-            <span style={{ color: '#7a8bb0' }}>Card</span>
-            <span style={{ fontFamily: 'monospace', color: '#c8d0f0' }}>
-              {node.session.cardUid?.slice(-6) || '—'}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-3)', display: 'flex', gap: 5, alignItems: 'center' }}>
+            <span>Card</span>
+            <span style={{ fontFamily: 'var(--mono)', color: 'var(--text-2)', fontWeight: 600 }}>
+              {node.session.cardUid?.slice(-8) || '—'}
             </span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-            <span style={{ fontSize: 18, fontWeight: 700, color: '#c8d0f0' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+            <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.02em' }}>
               {node.session.countPass}
             </span>
             {node.session.declaredPieces > 0 && (
-              <span style={{ fontSize: 11, color: '#7a8bb0' }}>
-                / {node.session.declaredPieces}
+              <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                / {node.session.declaredPieces} pcs
               </span>
             )}
           </div>
           {node.session.declaredPieces > 0 && (
-            <div style={{ background: '#1e2130', borderRadius: 3, height: 4, overflow: 'hidden' }}>
+            <div style={{ background: 'var(--surface-2)', borderRadius: 3, height: 4, overflow: 'hidden' }}>
               <div style={{
                 width: `${pct}%`, height: '100%',
-                background: pct >= 100 ? '#2caa4a' : '#2563eb',
+                background: pct >= 100 ? 'var(--success)' : 'var(--brand)',
                 borderRadius: 3,
                 transition: 'width 0.4s',
               }} />
             </div>
           )}
-          <div style={{ fontSize: 10, color: '#556' }}>
-            ⏱ {elapsed(node.session.startTs)}
+          <div style={{ fontSize: 10, color: 'var(--text-3)', display: 'flex', gap: 10 }}>
+            <span>{elapsed(node.session.startTs)}</span>
             {node.session.countCycle > 0 && (
-              <span style={{ marginLeft: 6 }}>
-                cycle {node.session.countCycle}
-              </span>
+              <span>cycle {node.session.countCycle}</span>
             )}
           </div>
         </div>
       ) : (
-        <div style={{ fontSize: 11, color: '#556', marginTop: 2 }}>
-          {health === 'offline' ? 'Offline' : 'Idle — no session'}
+        <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+          {health === 'offline' ? 'Offline' : 'Idle'}
         </div>
       )}
 
       {/* footer */}
       <div style={{
-        borderTop: '1px solid #1e2130', paddingTop: 4, marginTop: 2,
-        display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#556',
+        borderTop: '1px solid var(--border-dim)',
+        paddingTop: 7,
+        display: 'flex',
+        justifyContent: 'space-between',
+        fontSize: 10,
+        color: 'var(--text-3)',
       }}>
         <span>{node.lastSeenAt ? elapsed(node.lastSeenAt) + ' ago' : 'never'}</span>
         <span>{node.fwVersion || '—'}</span>
@@ -150,34 +167,41 @@ function LineCard({ line }) {
 
   return (
     <div style={{
-      background: '#1a1d27',
-      border: '1px solid #2a2d3a',
-      borderRadius: 8,
-      padding: '16px 18px',
-      marginBottom: 16,
+      background: 'var(--surface)',
+      border: '1px solid var(--border)',
+      borderRadius: 10,
+      padding: '16px 20px',
+      marginBottom: 14,
     }}>
       <div style={{
-        display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 12,
+        display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14,
+        paddingBottom: 12, borderBottom: '1px solid var(--border-dim)',
       }}>
-        <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>{line.name}</h3>
-        <span style={{ fontSize: 11, color: '#7a8bb0' }}>
+        <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
+          {line.name}
+        </h3>
+        <span style={{
+          fontSize: 10, fontWeight: 600, color: 'var(--text-3)',
+          background: 'var(--surface-1)', border: '1px solid var(--border)',
+          borderRadius: 4, padding: '2px 7px', textTransform: 'uppercase', letterSpacing: '0.06em',
+        }}>
           {activeNodes}/{line.nodes.length} active
         </span>
         {sessionsOpen > 0 && (
-          <span style={{ fontSize: 11, color: '#e59f00' }}>
-            {sessionsOpen} session{sessionsOpen !== 1 ? 's' : ''} open
+          <span className="badge badge-yellow">
+            {sessionsOpen} open
           </span>
         )}
         {totalPieces > 0 && (
-          <span style={{ fontSize: 11, color: '#2caa4a' }}>
-            {totalPieces} pcs counted
+          <span className="badge badge-green">
+            {totalPieces} pcs
           </span>
         )}
       </div>
 
       {line.nodes.length === 0 ? (
-        <p style={{ color: '#556', fontSize: 12, margin: 0 }}>
-          No nodes on this line. Provision a device and assign it here.
+        <p style={{ color: 'var(--text-3)', fontSize: 12, margin: 0 }}>
+          No nodes assigned. Provision a device and approve it here.
         </p>
       ) : (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
@@ -193,13 +217,14 @@ function LineCard({ line }) {
 // ─── WS status chip ──────────────────────────────────────────────────────────
 
 function WsChip({ state }) {
-  const labels = { connecting: ['Connecting…', '#e59f00'], open: ['Live', '#2caa4a'], closed: ['Disconnected', '#c44'], error: ['Error', '#c44'] }
-  const [label, color] = labels[state] || ['—', '#888']
-  return (
-    <span style={{ fontSize: 11, color, fontWeight: 700, letterSpacing: 0.5 }}>
-      ● {label}
-    </span>
-  )
+  const map = {
+    connecting: ['badge badge-yellow', 'Connecting'],
+    open:       ['badge badge-green',  'Live'],
+    closed:     ['badge badge-red',    'Disconnected'],
+    error:      ['badge badge-red',    'Error'],
+  }
+  const [cls, label] = map[state] || ['badge badge-gray', '—']
+  return <span className={cls}>● {label}</span>
 }
 
 // ─── Main component ──────────────────────────────────────────────────────────
@@ -334,10 +359,10 @@ export default function DashboardTab() {
         lines.map((line) => <LineCard key={line.id} line={line} />)
       )}
 
-      <div style={{ marginTop: 12, fontSize: 10, color: '#333' }}>
-        Node staleness: <span style={{ color: '#2caa4a' }}>● active</span> &lt;30s ·{' '}
-        <span style={{ color: '#e59f00' }}>● stale</span> &lt;2min ·{' '}
-        <span style={{ color: '#c44' }}>● offline</span> ≥2min
+      <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-3)', display: 'flex', gap: 16 }}>
+        <span><span style={{ color: 'var(--success)' }}>●</span> Active &lt;30s</span>
+        <span><span style={{ color: 'var(--warning)' }}>●</span> Stale &lt;2 min</span>
+        <span><span style={{ color: 'var(--danger)' }}>●</span> Offline ≥2 min</span>
       </div>
     </div>
   )

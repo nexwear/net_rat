@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { API_BASE, adminHeaders } from './AdminPage.jsx'
 
-const SEVERITY_COLORS = {
-  HIGH: '#E24B4A',
-  MED: '#e59f00',
-  LOW: '#7a8bb0',
+const SEVERITY_CLASS = {
+  HIGH: 'badge badge-red',
+  MED:  'badge badge-yellow',
+  LOW:  'badge badge-gray',
 }
 
 const TYPE_ICONS = {
@@ -125,10 +125,7 @@ export default function AlertsTab() {
                     {a.type}
                   </td>
                   <td>
-                    <span style={{
-                      color: SEVERITY_COLORS[a.severity] || '#888',
-                      fontWeight: 700, fontSize: 11,
-                    }}>
+                    <span className={SEVERITY_CLASS[a.severity] || 'badge badge-gray'}>
                       {a.severity}
                     </span>
                   </td>

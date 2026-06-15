@@ -229,10 +229,10 @@ async function initDb() {
   const factory = await pool.query('SELECT id FROM factories LIMIT 1');
   if (factory.rowCount === 0) {
     const f = await pool.query(
-      "INSERT INTO factories (name) VALUES ('Factory Pilot') RETURNING id"
+      "INSERT INTO factories (name, timezone) VALUES ('Net Rat', 'Asia/Kolkata') RETURNING id"
     );
     await pool.query(
-      "INSERT INTO lines (factory_id, name) VALUES ($1, 'Line 1')",
+      "INSERT INTO lines (factory_id, name, shift_start, shift_end) VALUES ($1, 'Line 1', '08:00', '17:00')",
       [f.rows[0].id]
     );
   }

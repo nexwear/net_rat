@@ -17,28 +17,50 @@ export function adminHeaders() {
   }
 }
 
+const TABS = [
+  { key: 'dashboard', label: 'Dashboard' },
+  { key: 'nodes',     label: 'Nodes'     },
+  { key: 'bundles',   label: 'Bundles'   },
+  { key: 'ota',       label: 'OTA'       },
+  { key: 'alerts',    label: 'Alerts'    },
+]
+
 export default function AdminPage() {
   const [tab, setTab] = useState('dashboard')
 
   return (
     <div className="admin-layout">
       <header className="admin-header">
-        <Link to="/" className="admin-back">← Factory Pilot</Link>
-        <h1>Admin</h1>
+        {/* Brand */}
+        <Link to="/" className="admin-brand">
+          <span className="admin-wordmark">Nex<span>wear</span></span>
+        </Link>
+
+        {/* Factory context */}
+        <span className="admin-factory-badge">Net Rat</span>
+
+        <span className="admin-divider" />
+
+        {/* Navigation */}
         <nav className="admin-tabs">
-          {[['dashboard','Dashboard'],['nodes','Nodes'],['bundles','Bundles'],['ota','OTA'],['alerts','Alerts']].map(([k,label]) => (
-            <button key={k} className={tab === k ? 'tab active' : 'tab'} onClick={() => setTab(k)}>
+          {TABS.map(({ key, label }) => (
+            <button
+              key={key}
+              className={tab === key ? 'tab active' : 'tab'}
+              onClick={() => setTab(key)}
+            >
               {label}
             </button>
           ))}
         </nav>
       </header>
+
       <main className="admin-main">
         {tab === 'dashboard' && <DashboardTab />}
-        {tab === 'nodes' && <NodesTab />}
-        {tab === 'bundles' && <BundlesTab />}
-        {tab === 'ota' && <OtaTab />}
-        {tab === 'alerts' && <AlertsTab />}
+        {tab === 'nodes'     && <NodesTab />}
+        {tab === 'bundles'   && <BundlesTab />}
+        {tab === 'ota'       && <OtaTab />}
+        {tab === 'alerts'    && <AlertsTab />}
       </main>
     </div>
   )
