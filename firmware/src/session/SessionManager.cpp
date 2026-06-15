@@ -5,8 +5,9 @@
 #include <cstring>
 
 SessionManager::SessionManager(const DeviceConfig& cfg, std::vector<CounterDriver*>& drivers,
-                               QueueHandle_t telemetryQ, uint32_t* seqCounter)
-    : _cfg(cfg), _drivers(drivers), _telemetryQ(telemetryQ), _seqCounter(seqCounter) {}
+                               QueueHandle_t telemetryQ, uint32_t* seqCounter, BuzzerDriver* buzzer)
+    : _cfg(cfg), _drivers(drivers), _telemetryQ(telemetryQ), _seqCounter(seqCounter),
+      _buzzer(buzzer) {}
 
 uint32_t SessionManager::deltaFor(DriverId id) const {
   for (auto* d : _drivers) {
@@ -19,23 +20,70 @@ uint32_t SessionManager::deltaFor(DriverId id) const {
   return 0;
 }
 
+uint32_t SessionManager::rotationDelta() const {
+  return deltaFor(DriverId::HALL);
+}
+
+uint32_t SessionManager::horseshoeGroups() const {
+  return deltaFor(DriverId::HORSESHOE);
+}
+
+uint32_t SessionManager::quantumEstimate() const {
+  const uint32_t rot = rotationDelta();
+  if (_ppp < MIN_PPP || rot == 0) return 0;
+  return static_cast<uint32_t>((rot / _ppp) + 0.5f);
+}
+
+// count_pass = pieces. For the press it is the confirmed press cycles (ground
+// truth). For INPUT / OUTPUT_1 it is a fusion: whichever of the windowed
+// horseshoe groups (good when the worker lifts) or the rotation-quantum
+// estimate (good for continuous feeders, once PPP is calibrated) is larger.
 uint32_t SessionManager::passCount() const {
   ModuleType mt = moduleTypeFromString(_cfg.moduleType);
   if (mt == ModuleType::OUTPUT_2) {
     return deltaFor(DriverId::PRESS);
   }
-  return deltaFor(DriverId::HORSESHOE);
+  const uint32_t groups = horseshoeGroups();
+  const uint32_t est = quantumEstimate();
+  return groups > est ? groups : est;
 }
 
+// count_cycle = raw stitching work (motor rotations). This is what the server
+// divides by the true OUTPUT_2 count to calibrate PPP per style+size. The
+// press station has no rotary sensor, so it reports 0.
 uint32_t SessionManager::cycleCount() const {
   ModuleType mt = moduleTypeFromString(_cfg.moduleType);
-  if (mt == ModuleType::MOD_INPUT) {
-    return deltaFor(DriverId::CURRENT);
+  if (mt == ModuleType::OUTPUT_2) {
+    return 0;
   }
-  if (mt == ModuleType::OUTPUT_1) {
-    return deltaFor(DriverId::HALL);
-  }
-  return 0;
+  return rotationDelta();
+}
+
+// While a worker is lifting the horseshoe we have an independent piece count
+// (groups) alongside the rotation total, so we can learn this style's PPP live
+// and apply it to subsequent non-lifting workers without waiting for the
+// server's OUTPUT_2 reconciliation.
+void SessionManager::updateLiveCalibration() {
+  ModuleType mt = moduleTypeFromString(_cfg.moduleType);
+  if (mt != ModuleType::MOD_INPUT && mt != ModuleType::OUTPUT_1) return;
+
+  const uint32_t groups = horseshoeGroups();
+  const uint32_t rot = rotationDelta();
+  if (groups < CALIB_MIN_GROUPS || rot == 0) return;
+
+  const float sample = static_cast<float>(rot) / static_cast<float>(groups);
+  if (sample < MIN_PPP || sample > MAX_PPP) return;
+
+  _ppp = (_ppp * (1.0f - CALIB_BLEND)) + (sample * CALIB_BLEND);
+}
+
+void SessionManager::setPpp(uint32_t ppp) {
+  if (ppp == 0) return;
+  float v = static_cast<float>(ppp);
+  if (v < MIN_PPP) v = MIN_PPP;
+  if (v > MAX_PPP) v = MAX_PPP;
+  _ppp = v;
+  Serial.printf("[SESSION] PPP set to %.0f pulses/piece\n", _ppp);
 }
 
 float SessionManager::liveAmps() const {
@@ -119,12 +167,10 @@ uint32_t SessionManager::unassignedPassCount() const {
 
 uint32_t SessionManager::unassignedCycleCount() const {
   ModuleType mt = moduleTypeFromString(_cfg.moduleType);
+  if (mt != ModuleType::MOD_INPUT && mt != ModuleType::OUTPUT_1) return 0;
   uint32_t total = 0;
   for (auto* d : _drivers) {
-    if (!d) continue;
-    if (mt == ModuleType::MOD_INPUT && d->id() == DriverId::CURRENT) {
-      total = d->total();
-    } else if (mt == ModuleType::OUTPUT_1 && d->id() == DriverId::HALL) {
+    if (d && d->id() == DriverId::HALL) {
       total = d->total();
     }
   }
@@ -147,8 +193,10 @@ void SessionManager::openSession(const char* cardUid, ScanKind kind) {
   gCardLookup.cardUid[sizeof(gCardLookup.cardUid) - 1] = '\0';
   gCardLookup.pending.store(true);
 
+  if (_buzzer) _buzzer->play(BuzzPattern::TAP_IN);
+
   emit(TelemetryType::SCAN, kind);
-  Serial.printf("[SESSION] open uid=%s session=%s\n", cardUid, _sessionId);
+  Serial.printf("[SESSION] open uid=%s session=%s ppp=%.0f\n", cardUid, _sessionId, _ppp);
   Serial.println("[SESSION] tap-out: remove card, then tap same card again");
   emit(TelemetryType::SESSION_UPDATE);
   _lastEmitMs = millis();
@@ -165,6 +213,10 @@ void SessionManager::setDeclaredPieces(uint32_t pieces) {
 }
 
 void SessionManager::closeSession(CloseReason reason, ScanKind scanKind) {
+  if (_buzzer) {
+    _buzzer->play(reason == CloseReason::QUANTITY ? BuzzPattern::QUANTITY_DONE
+                                                  : BuzzPattern::TAP_OUT);
+  }
   emit(TelemetryType::SESSION_CLOSE, scanKind, reason);
   Serial.printf("[SESSION] closed uid=%s reason=%s pass=%lu cycle=%lu\n", _activeCardUid,
                 closeReasonToString(reason), passCount(), cycleCount());
@@ -178,7 +230,7 @@ void SessionManager::closeSession(CloseReason reason, ScanKind scanKind) {
     if (d->id() == DriverId::HORSESHOE || d->id() == DriverId::PRESS) {
       _unassignedBaselinePass = d->total();
     }
-    if (d->id() == DriverId::CURRENT || d->id() == DriverId::HALL) {
+    if (d->id() == DriverId::HALL) {
       _unassignedBaselineCycle = d->total();
     }
   }
@@ -189,6 +241,7 @@ void SessionManager::onTap(const char* cardUid, ScanKind kindOverride) {
   const bool admin = moduleTypeFromString(_cfg.moduleType) == ModuleType::ADMIN;
 
   if (admin) {
+    if (_buzzer) _buzzer->play(BuzzPattern::TAP_IN);
     strncpy(_activeCardUid, cardUid, sizeof(_activeCardUid) - 1);
     emit(TelemetryType::SCAN, ScanKind::ASSIGN_SCAN);
     _activeCardUid[0] = '\0';
@@ -214,6 +267,7 @@ void SessionManager::tick() {
   const uint32_t now = millis();
 
   if (hasOpenSession()) {
+    updateLiveCalibration();
     if ((now - _lastEmitMs) > SESSION_UPDATE_MS || deltaChangedBy(DELTA_EMIT_THRESHOLD)) {
       emit(TelemetryType::SESSION_UPDATE);
       _lastEmitMs = now;

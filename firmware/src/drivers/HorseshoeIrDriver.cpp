@@ -9,6 +9,17 @@ void HorseshoeIrDriver::begin() {
   _stateMs = millis();
 }
 
+void HorseshoeIrDriver::registerBreak() {
+  const uint32_t now = millis();
+  _rawBreaks++;
+  // First break, or a break after the grouping window expired, starts a new
+  // piece. Breaks inside the window are absorbed into the current piece.
+  if (_lastBreakMs == 0 || (now - _lastBreakMs) > GROUP_GAP_MS) {
+    _groups++;
+  }
+  _lastBreakMs = now;
+}
+
 void HorseshoeIrDriver::poll() {
   const bool raw = digitalRead(_pin);
   const uint32_t now = millis();
@@ -34,7 +45,7 @@ void HorseshoeIrDriver::poll() {
       break;
     case State::CONFIRMED:
       if (raw && (now - _stateMs) >= DEBOUNCE_MS) {
-        _total++;
+        registerBreak();
         _state = State::IDLE;
         _stateMs = now;
       }

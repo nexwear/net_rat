@@ -28,6 +28,7 @@ bool ConfigStore::load(DeviceConfig& out) {
   out.serverUrl = prefs.getString("server", "");
   out.nodeId = prefs.getString("nodeId", "");
   out.moduleType = prefs.getString("moduleType", "INPUT");
+  out.label = prefs.getString("label", "");
   out.lineId = prefs.getString("lineId", "");
   out.factoryId = prefs.getString("factoryId", "");
   out.token = prefs.getString("token", "");
@@ -77,6 +78,7 @@ bool ConfigStore::save(const DeviceConfig& cfg) {
   prefs.putString("server", cfg.serverUrl);
   prefs.putString("nodeId", cfg.nodeId);
   prefs.putString("moduleType", cfg.moduleType);
+  prefs.putString("label", cfg.label);
   prefs.putString("lineId", cfg.lineId);
   prefs.putString("factoryId", cfg.factoryId);
   prefs.putString("token", cfg.token);

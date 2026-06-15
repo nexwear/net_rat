@@ -1,4 +1,5 @@
 #include "prov/Provisioning.h"
+#include "prov/SerialConfig.h"
 #include <ArduinoJson.h>
 #include <DNSServer.h>
 #include <HTTPClient.h>
@@ -118,7 +119,8 @@ bool Provisioning::claimDevice(DeviceConfig& cfg, ModuleType hint) {
 
   JsonDocument doc;
   doc["chipId"] = ConfigStore::chipId();
-  doc["moduleHint"] = moduleTypeToString(hint);
+  doc["moduleHint"] = cfg.moduleType.length() > 0 ? cfg.moduleType : String(moduleTypeToString(hint));
+  if (cfg.label.length() > 0) doc["label"] = cfg.label;
   String body;
   serializeJson(doc, body);
 
@@ -191,10 +193,25 @@ bool Provisioning::handlePortal(DeviceConfig& cfg, ModuleType hint, bool wifiOnl
   if (wifiOnly) {
     Serial.println("[PROV] WiFi-only update — enter new WiFi + server URL");
   }
+  Serial.println("[PROV] Waiting for setup - SoftAP portal or USB serial (CFG/STATUS/RESET)");
 
+  String line;
   while (!gSubmitted) {
     dns.processNextRequest();
     server.handleClient();
+
+    // Accept configuration over USB serial (from the desktop flasher/configurator).
+    if (SerialCfg::readLine(line)) {
+      if (SerialCfg::applyCfg(line, *gCfg)) {
+        SerialCfg::printOk("config received - claiming");
+        gSubmitted = true;
+      } else if (line == "STATUS") {
+        SerialCfg::printStatus(*gCfg, wifiOnly ? "WIFI_SETUP" : "PROVISIONING");
+      } else if (line == "RESET") {
+        ConfigStore::wipe();
+        ESP.restart();
+      }
+    }
     delay(10);
   }
 

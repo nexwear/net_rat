@@ -5,16 +5,18 @@
 #include <vector>
 #include "DeviceConfig.h"
 #include "drivers/CounterDriver.h"
+#include "drivers/BuzzerDriver.h"
 #include "types.h"
 
 class SessionManager {
  public:
   SessionManager(const DeviceConfig& cfg, std::vector<CounterDriver*>& drivers, QueueHandle_t telemetryQ,
-                 uint32_t* seqCounter);
+                 uint32_t* seqCounter, BuzzerDriver* buzzer = nullptr);
 
   void onTap(const char* cardUid, ScanKind kindOverride = ScanKind::TAP_IN);
   void tick();
   void setDeclaredPieces(uint32_t pieces);
+  void setPpp(uint32_t ppp);  // pulses-per-piece pushed from server for this bundle
   bool hasOpenSession() const { return _activeCardUid[0] != '\0'; }
   const char* activeCardUid() const { return _activeCardUid; }
 
@@ -28,6 +30,7 @@ class SessionManager {
   std::vector<CounterDriver*>& _drivers;
   QueueHandle_t _telemetryQ;
   uint32_t* _seqCounter;
+  BuzzerDriver* _buzzer;
 
   char _activeCardUid[24] = "";
   char _sessionId[37] = "";
@@ -43,6 +46,10 @@ class SessionManager {
   uint32_t deltaFor(DriverId id) const;
   uint32_t passCount() const;
   uint32_t cycleCount() const;
+  uint32_t rotationDelta() const;        // hall rotations this session (raw work)
+  uint32_t horseshoeGroups() const;      // windowed piece-groups this session
+  uint32_t quantumEstimate() const;      // rotations / ppp
+  void updateLiveCalibration();          // refine _ppp from lifters mid-session
   float liveAmps() const;
   void snapshotBaselines();
   void openSession(const char* cardUid, ScanKind kind);
@@ -57,6 +64,7 @@ class SessionManager {
   uint32_t _unassignedBaselineCycle = 0;
   uint32_t _cachedDeclared = 0;
   uint32_t _qtyReachedMs = 0;
+  float _ppp = DEFAULT_PPP;  // pulses-per-piece, calibrated per style+size
 
   static constexpr uint32_t TAP_OUT_WINDOW_MS = 2500;
   static constexpr uint32_t SESSION_UPDATE_MS = 10000;
@@ -64,4 +72,11 @@ class SessionManager {
   static constexpr uint32_t UNASSIGNED_EMIT_MS = 30000;
   static constexpr uint32_t DELTA_EMIT_THRESHOLD = 5;
   static constexpr uint32_t QTY_GRACE_MS = 3000;
+
+  // Counting / calibration
+  static constexpr float    DEFAULT_PPP = 400.0f;  // bootstrap before server data
+  static constexpr float    MIN_PPP = 20.0f;       // sanity clamp
+  static constexpr float    MAX_PPP = 20000.0f;
+  static constexpr uint32_t CALIB_MIN_GROUPS = 4;  // groups needed to trust a live sample
+  static constexpr float    CALIB_BLEND = 0.15f;   // weight of each live sample
 };

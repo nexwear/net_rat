@@ -14,6 +14,7 @@ struct DeviceConfig {
   String serverUrl;
   String nodeId;
   String moduleType;
+  String label;       // human-friendly name, e.g. "Line 1 – Elastic"
   String lineId;
   String factoryId;
   String token;

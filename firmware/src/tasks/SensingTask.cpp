@@ -1,4 +1,5 @@
 #include "tasks/SensingTask.h"
+#include "drivers/BuzzerDriver.h"
 #include "drivers/CurrentDriver.h"
 #include "drivers/HallDriver.h"
 #include "drivers/HorseshoeIrDriver.h"
@@ -27,24 +28,27 @@ void sensingLoop(void* param) {
   HorseshoeIrDriver horseshoeDriver(static_cast<uint8_t>(pinMap.horseshoeIr));
   CurrentDriver currentDriver(static_cast<uint8_t>(pinMap.currentAdc));
   HallDriver hallDriver(static_cast<uint8_t>(pinMap.hall));
-  PressCycleDriver pressDriver(static_cast<uint8_t>(pinMap.pressDown),
-                               static_cast<uint8_t>(pinMap.pressUp));
+  PressCycleDriver pressDriver(static_cast<uint8_t>(pinMap.irCloth),
+                               static_cast<uint8_t>(pinMap.irPress));
 
   if (pinMap.horseshoeIr >= 0) drivers.push_back(&horseshoeDriver);
   if (pinMap.currentAdc >= 0) drivers.push_back(&currentDriver);
   if (pinMap.hall >= 0) drivers.push_back(&hallDriver);
-  if (pinMap.pressDown >= 0 && pinMap.pressUp >= 0) drivers.push_back(&pressDriver);
+  if (pinMap.irCloth >= 0 && pinMap.irPress >= 0) drivers.push_back(&pressDriver);
 
   for (auto* d : drivers) {
     d->begin();
   }
+
+  BuzzerDriver buzzer(pinMap.buzzer);
+  buzzer.begin();
 
   NfcSubsystem nfc(pinMap);
   if (!nfc.begin()) {
     Serial.println("[NFC] init failed — card reads disabled until reboot");
   }
 
-  SessionManager sessions(ctx->cfg, drivers, ctx->telemetryQ, ctx->seqCounter);
+  SessionManager sessions(ctx->cfg, drivers, ctx->telemetryQ, ctx->seqCounter, &buzzer);
   nfc.onTap([&sessions](const char* uid) { sessions.onTap(uid); });
 
   pinMode(pinMap.configButton, INPUT_PULLUP);
@@ -56,6 +60,7 @@ void sensingLoop(void* param) {
     for (auto* d : drivers) {
       d->poll();
     }
+    buzzer.poll();
     nfc.pollRead();
     sessions.tick();
 
@@ -64,6 +69,7 @@ void sensingLoop(void* param) {
       if (cmd.type == CmdType::REPROVISION && !sessions.hasOpenSession()) {
         ctx->nodeState->store(NodeState::REPROVISIONING);
       } else if (cmd.type == CmdType::CARD_DECLARED) {
+        sessions.setPpp(cmd.ppp);
         sessions.setDeclaredPieces(cmd.declaredPieces);
       }
     }

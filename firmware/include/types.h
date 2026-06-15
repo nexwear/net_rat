@@ -35,6 +35,7 @@ struct TelemetryEvent {
 struct Command {
   CmdType type;
   uint32_t declaredPieces = 0;
+  uint32_t ppp = 0;  // pulses-per-piece for this bundle's style+size (0 = leave unchanged)
 };
 
 inline const char* moduleTypeToString(ModuleType t) {

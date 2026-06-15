@@ -2,6 +2,7 @@
 #include <atomic>
 #include "DeviceConfig.h"
 #include "prov/Provisioning.h"
+#include "prov/SerialConfig.h"
 #include "tasks/NetTask.h"
 #include "tasks/SensingTask.h"
 
@@ -55,5 +56,31 @@ void setup() {
 }
 
 void loop() {
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  // USB-serial control channel for the desktop configurator. Lets an already
+  // provisioned node be re-configured or queried over the cable without the
+  // SoftAP portal. CFG replaces wifi+server+module+label (token/nodeId kept).
+  String line;
+  if (SerialCfg::readLine(line)) {
+    if (line == "STATUS") {
+      SerialCfg::printStatus(gConfig, "ACTIVE");
+    } else if (line == "RESET") {
+      SerialCfg::printOk("factory reset — rebooting");
+      Provisioning::factoryReset();
+      delay(200);
+      ESP.restart();
+    } else if (line.startsWith("CFG ")) {
+      DeviceConfig cur;
+      ConfigStore::load(cur);  // preserve token / nodeId / line / factory
+      if (SerialCfg::applyCfg(line, cur)) {
+        if (ConfigStore::save(cur)) {
+          SerialCfg::printOk("config saved — rebooting");
+          delay(200);
+          ESP.restart();
+        } else {
+          SerialCfg::printErr("nvs save failed");
+        }
+      }
+    }
+  }
+  vTaskDelay(pdMS_TO_TICKS(50));
 }

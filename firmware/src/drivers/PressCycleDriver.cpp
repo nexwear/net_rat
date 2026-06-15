@@ -1,50 +1,53 @@
 #include "drivers/PressCycleDriver.h"
 
-PressCycleDriver::PressCycleDriver(uint8_t pinDown, uint8_t pinUp)
-    : _pinDown(pinDown), _pinUp(pinUp) {}
+PressCycleDriver::PressCycleDriver(uint8_t clothPin, uint8_t pressPin)
+    : _clothPin(clothPin), _pressPin(pressPin) {}
 
 void PressCycleDriver::begin() {
-  pinMode(_pinDown, INPUT_PULLUP);
-  pinMode(_pinUp, INPUT_PULLUP);
-  _state = State::OPEN;
-  _stateMs = millis();
+  // Active-HIGH sensors: pull down so an idle/disconnected line reads LOW
+  // (not-detected) and only a real detection drives it HIGH.
+  pinMode(_clothPin, INPUT_PULLDOWN);
+  pinMode(_pressPin, INPUT_PULLDOWN);
+  _state = State::IDLE;
+  _pressRaw = _pressStable = false;
+  _pressEdgeMs = millis();
+  _hadCloth = false;
 }
 
 void PressCycleDriver::poll() {
-  const bool down = !digitalRead(_pinDown);
-  const bool up = !digitalRead(_pinUp);
   const uint32_t now = millis();
+  const bool cloth = digitalRead(_clothPin) == HIGH;       // garment present
+  const bool pressNow = digitalRead(_pressPin) == HIGH;    // press down
+
+  // Debounce the press signal.
+  if (pressNow != _pressRaw) {
+    _pressRaw = pressNow;
+    _pressEdgeMs = now;
+  }
+  if ((now - _pressEdgeMs) >= DEBOUNCE_MS) {
+    _pressStable = _pressRaw;
+  }
 
   switch (_state) {
-    case State::OPEN:
-      if (down) {
-        _state = State::CLOSING;
-        _stateMs = now;
+    case State::IDLE:
+      if (_pressStable) {
+        // Press started — remember whether cloth was on the platen.
+        _state = State::PRESSING;
+        _pressStartMs = now;
+        _hadCloth = cloth;
       }
       break;
-    case State::CLOSING:
-      if (down && (now - _stateMs) >= DEBOUNCE_MS) {
-        _state = State::DWELL;
-        _stateMs = now;
-      } else if (!down) {
-        _state = State::OPEN;
-      }
-      break;
-    case State::DWELL:
-      if (!down) {
-        _state = State::OPEN;
-      } else if ((now - _stateMs) >= MIN_DWELL_MS) {
-        _state = State::OPENING;
-        _stateMs = now;
-      }
-      break;
-    case State::OPENING:
-      if (up && (now - _stateMs) >= DEBOUNCE_MS) {
-        _total++;
-        _state = State::OPEN;
-        _stateMs = now;
-      } else if (!up && !down) {
-        _state = State::OPEN;
+
+    case State::PRESSING:
+      // Cloth may be detected slightly after the press begins — keep watching.
+      if (cloth) _hadCloth = true;
+      if (!_pressStable) {
+        // Press lifted — count only a real, dwelled press on a garment.
+        if (_hadCloth && (now - _pressStartMs) >= MIN_DWELL_MS) {
+          _total++;
+        }
+        _state = State::IDLE;
+        _hadCloth = false;
       }
       break;
   }

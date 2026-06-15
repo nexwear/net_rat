@@ -58,7 +58,7 @@ void fetchCardDeclared(const DeviceConfig& cfg, QueueHandle_t commandQ, const ch
     return;
   }
 
-  const String url = cfg.serverUrl + "/v1/card/" + cardUid;
+  const String url = cfg.serverUrl + "/v1/card/" + cardUid + "?module=" + cfg.moduleType;
   HTTPClient http;
   WiFiClient client;
   if (!http.begin(client, url)) {
@@ -73,12 +73,15 @@ void fetchCardDeclared(const DeviceConfig& cfg, QueueHandle_t commandQ, const ch
   Command cmd{};
   cmd.type = CmdType::CARD_DECLARED;
   cmd.declaredPieces = 0;
+  cmd.ppp = 0;
 
   if (code == 200) {
     JsonDocument doc;
     if (deserializeJson(doc, body) == DeserializationError::Ok) {
       cmd.declaredPieces = doc["declaredPieces"] | 0;
-      Serial.printf("[NET] card %s declared=%lu pieces\n", cardUid, cmd.declaredPieces);
+      cmd.ppp = doc["ppp"] | 0;
+      Serial.printf("[NET] card %s declared=%lu pieces ppp=%lu\n", cardUid, cmd.declaredPieces,
+                    cmd.ppp);
     }
   } else if (code == 404) {
     Serial.printf("[NET] card %s unassigned (404)\n", cardUid);

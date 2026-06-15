@@ -1,28 +1,38 @@
 #include "drivers/HallDriver.h"
 
+HallDriver* HallDriver::_instance = nullptr;
+
 HallDriver::HallDriver(uint8_t pin) : _pin(pin) {}
 
 void HallDriver::begin() {
   pinMode(_pin, INPUT_PULLUP);
-  _lastRaw = digitalRead(_pin);
-  _lastStable = _lastRaw;
-  _edgeMs = millis();
+  _instance = this;
+  _count = 0;
+  _lastPulseUs = micros();
+  attachInterrupt(digitalPinToInterrupt(_pin), isrTrampoline, FALLING);
+}
+
+void IRAM_ATTR HallDriver::isrTrampoline() {
+  if (_instance) _instance->onPulse();
+}
+
+void IRAM_ATTR HallDriver::onPulse() {
+  const uint32_t now = micros();
+  // micros() wraps every ~71 min; subtraction is still correct modulo 2^32.
+  if ((now - _lastPulseUs) >= MIN_PULSE_US) {
+    _count++;
+    _lastPulseUs = now;
+  }
 }
 
 void HallDriver::poll() {
-  const bool raw = digitalRead(_pin);
-  const uint32_t now = millis();
+  // Counting happens in the ISR; nothing to do on the polled path.
+}
 
-  if (raw != _lastRaw) {
-    _lastRaw = raw;
-    _edgeMs = now;
-  }
+uint32_t HallDriver::total() const {
+  return _count;
+}
 
-  if (raw != _lastStable && (now - _edgeMs) >= DEBOUNCE_MS) {
-    _lastStable = raw;
-    if (!raw && (now - _lastCountMs) >= MIN_INTERVAL_MS) {
-      _total++;
-      _lastCountMs = now;
-    }
-  }
+bool HallDriver::isRunning() const {
+  return (micros() - _lastPulseUs) < STOP_US;
 }
