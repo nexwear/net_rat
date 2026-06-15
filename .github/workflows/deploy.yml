@@ -19,13 +19,40 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            set -e
+            set -euo pipefail
             cd /opt/app
+
             git pull origin main
             mkdir -p backend/firmware
+
+            if [ ! -f .env ]; then
+              cp .env.example .env
+              echo "Created .env from .env.example — set POSTGRES_PASSWORD on the server"
+            fi
+
             docker compose up -d --build
+
             echo "Waiting for backend..."
-            sleep 15
+            for i in $(seq 1 30); do
+              if curl -sf http://127.0.0.1:4000/health >/dev/null; then
+                echo "Backend healthy (attempt $i)"
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "Backend failed to become healthy"
+                docker compose logs backend --tail 80
+                exit 1
+              fi
+              sleep 2
+            done
+
+            echo "Restarting nginx (refresh backend upstream after recreate)..."
+            docker compose restart nginx
+
+            sleep 3
             curl -sf http://127.0.0.1:4000/health
-            echo "Deploy OK"
+            curl -sf http://127.0.0.1/api/health
+
+            echo "Deploy OK — backend and nginx /api health checks passed"
+            docker compose ps
             docker image prune -f
