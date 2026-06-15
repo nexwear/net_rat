@@ -8,6 +8,8 @@ enum class BuzzPattern : uint8_t {
   TAP_OUT,       // one medium descending beep — "session closed"
   QUANTITY_DONE, // three rising beeps — "bundle complete"
   ERROR,         // two low quick beeps — "unrecognised / no bundle"
+  ADMIN_NEW,     // double beep — card registered with new number
+  ADMIN_EXISTS,  // low-long + high-short — card already in registry
 };
 
 // Non-blocking buzzer driver using ESP32 LEDC.

@@ -1,10 +1,14 @@
 #include "net/TelemetrySender.h"
+#include "types.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 #include <HTTPClient.h>
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 
-TelemetrySender::TelemetrySender(const DeviceConfig& cfg, OfflineStore& store) : _cfg(cfg), _store(store) {}
+TelemetrySender::TelemetrySender(const DeviceConfig& cfg, OfflineStore& store, QueueHandle_t commandQ)
+    : _cfg(cfg), _store(store), _commandQ(commandQ) {}
 
 bool TelemetrySender::postJson(const String& path, const String& body) {
   if (WiFi.status() != WL_CONNECTED) {
@@ -88,7 +92,29 @@ bool TelemetrySender::send(const TelemetryEvent& ev) {
       doc["kind"] = scanKindToString(static_cast<ScanKind>(ev.scanKind));
       doc["cardUid"] = ev.cardUid;
       serializeJson(doc, body);
-      ok = postJson("/v1/scan", body);
+      const bool adminAssign =
+          _cfg.moduleType == "ADMIN" && static_cast<ScanKind>(ev.scanKind) == ScanKind::ASSIGN_SCAN;
+      if (adminAssign) {
+        String resp;
+        ok = postJsonWithResponse("/v1/scan", body, resp);
+        if (ok && _commandQ != nullptr && resp.length() > 0) {
+          JsonDocument respDoc;
+          if (deserializeJson(respDoc, resp) == DeserializationError::Ok) {
+            const uint32_t cardNum = respDoc["cardNumber"] | 0;
+            if (cardNum > 0) {
+              Command cmd{};
+              cmd.type = CmdType::ADMIN_SCAN_FEEDBACK;
+              cmd.cardNumber = cardNum;
+              cmd.newlyRegistered = respDoc["newlyRegistered"] | false;
+              xQueueSend(_commandQ, &cmd, 0);
+              Serial.printf("[ADMIN] #%03lu %s uid=%s\n", cardNum,
+                            cmd.newlyRegistered ? "registered" : "already registered", ev.cardUid);
+            }
+          }
+        }
+      } else {
+        ok = postJson("/v1/scan", body);
+      }
       break;
     }
     case TelemetryType::SESSION_UPDATE:

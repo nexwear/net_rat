@@ -241,10 +241,7 @@ void SessionManager::onTap(const char* cardUid, ScanKind kindOverride) {
   const bool admin = moduleTypeFromString(_cfg.moduleType) == ModuleType::ADMIN;
 
   if (admin) {
-    if (_buzzer) _buzzer->play(BuzzPattern::TAP_IN);
-    strncpy(_activeCardUid, cardUid, sizeof(_activeCardUid) - 1);
     emit(TelemetryType::SCAN, ScanKind::ASSIGN_SCAN);
-    _activeCardUid[0] = '\0';
     return;
   }
 

@@ -299,6 +299,17 @@ async function ingestScan(node, body) {
 
   const dup = await query('SELECT 1 FROM scan_events WHERE event_id = $1', [eventId]);
   if (dup.rowCount > 0) {
+    if (kind === 'ASSIGN_SCAN' && cardUid) {
+      const info = await ensureCardRegistered(cardUid);
+      return {
+        duplicate: true,
+        ok: true,
+        cardUid,
+        cardNumber: info?.card_number ?? null,
+        cardStatus: info?.status ?? null,
+        newlyRegistered: false,
+      };
+    }
     return { duplicate: true };
   }
 

@@ -47,6 +47,7 @@ void sensingLoop(void* param) {
   if (!nfc.begin()) {
     Serial.println("[NFC] init failed — card reads disabled until reboot");
   }
+  nfc.setAssignMode(moduleType == ModuleType::ADMIN);
 
   SessionManager sessions(ctx->cfg, drivers, ctx->telemetryQ, ctx->seqCounter, &buzzer);
   nfc.onTap([&sessions](const char* uid) { sessions.onTap(uid); });
@@ -54,6 +55,7 @@ void sensingLoop(void* param) {
   pinMode(pinMap.configButton, INPUT_PULLUP);
   pinMode(pinMap.statusLed, OUTPUT);
   uint32_t buttonDownMs = 0;
+  uint32_t adminLedUntilMs = 0;
 
   TickType_t lastWake = xTaskGetTickCount();
   for (;;) {
@@ -71,6 +73,11 @@ void sensingLoop(void* param) {
       } else if (cmd.type == CmdType::CARD_DECLARED) {
         sessions.setPpp(cmd.ppp);
         sessions.setDeclaredPieces(cmd.declaredPieces);
+      } else if (cmd.type == CmdType::ADMIN_SCAN_FEEDBACK) {
+        if (cmd.cardNumber > 0) {
+          buzzer.play(cmd.newlyRegistered ? BuzzPattern::ADMIN_NEW : BuzzPattern::ADMIN_EXISTS);
+          adminLedUntilMs = millis() + (cmd.newlyRegistered ? 450U : 250U);
+        }
       }
     }
 
@@ -91,6 +98,8 @@ void sensingLoop(void* param) {
 
     if (gOtaActive.load()) {
       // LED blinks rapidly during production OTA (handled in OtaMgr)
+    } else if (moduleType == ModuleType::ADMIN) {
+      digitalWrite(pinMap.statusLed, millis() < adminLedUntilMs ? HIGH : LOW);
     } else if (sessions.hasOpenSession()) {
       digitalWrite(pinMap.statusLed, HIGH);
     } else {

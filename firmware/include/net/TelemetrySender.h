@@ -6,7 +6,7 @@
 
 class TelemetrySender {
  public:
-  TelemetrySender(const DeviceConfig& cfg, OfflineStore& store);
+  TelemetrySender(const DeviceConfig& cfg, OfflineStore& store, QueueHandle_t commandQ = nullptr);
 
   bool send(const TelemetryEvent& ev);
   bool sendHeartbeat(int rssi, uint32_t uptimeSec, size_t queueDepth, uint32_t flags,
@@ -18,4 +18,5 @@ class TelemetrySender {
 
   const DeviceConfig& _cfg;
   OfflineStore& _store;
+  QueueHandle_t _commandQ;
 };

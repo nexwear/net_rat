@@ -46,6 +46,21 @@ void BuzzerDriver::play(BuzzPattern p) {
       _steps[2] = {900, 100};
       _stepCount = 3;
       break;
+
+    case BuzzPattern::ADMIN_NEW:
+      _steps[0] = {2700, 120};
+      _steps[1] = {0,    70};
+      _steps[2] = {2700, 120};
+      _stepCount = 3;
+      break;
+
+    case BuzzPattern::ADMIN_EXISTS:
+      // Distinct from TAP_IN — already registered
+      _steps[0] = {1400, 220};
+      _steps[1] = {0,    80};
+      _steps[2] = {2400, 100};
+      _stepCount = 3;
+      break;
   }
 
   _stepIdx = 0;

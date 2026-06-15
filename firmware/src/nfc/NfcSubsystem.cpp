@@ -142,11 +142,41 @@ void NfcSubsystem::pollRead() {
   }
   _lastPollMs = now;
 
-  if (_quietUntilMs != 0 && now < _quietUntilMs) {
+  char uid[24] = "";
+
+  if (_assignMode) {
+    const bool present = readUid(uid);
+    if (present && uid[0] != '\0') {
+      if (!_cardPresent) {
+        _cardPresent = true;
+        emitTap(uid);
+      } else if (strcmp(uid, _lastUid) != 0) {
+        emitTap(uid);
+      }
+      _absentStreak = 0;
+      return;
+    }
+
+    if (_cardPresent) {
+      if (++_absentStreak >= ASSIGN_ABSENT_DEBOUNCE_POLLS) {
+        _cardPresent = false;
+        _absentStreak = 0;
+        _lastUid[0] = '\0';
+        Serial.println("[NFC] card removed — ready for next tap");
+      }
+    } else {
+      _absentStreak = 0;
+      if ((now - _lastIdleLogMs) > 30000) {
+        _lastIdleLogMs = now;
+        Serial.println("[NFC] admin reader listening — present card");
+      }
+    }
     return;
   }
 
-  char uid[24] = "";
+  if (_quietUntilMs != 0 && now < _quietUntilMs) {
+    return;
+  }
 
   if (_cardPresent) {
     const bool present = readUid(uid);
@@ -180,5 +210,8 @@ void NfcSubsystem::pollRead() {
 }
 
 uint32_t NfcSubsystem::pollIntervalMs() const {
+  if (_assignMode) {
+    return _cardPresent ? ASSIGN_ABSENT_CHECK_MS : POLL_INTERVAL_MS;
+  }
   return _cardPresent ? ABSENT_CHECK_MS : POLL_INTERVAL_MS;
 }

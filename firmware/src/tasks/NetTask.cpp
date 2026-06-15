@@ -97,7 +97,7 @@ void netLoop(void* param) {
   WiFiManagerTask wifi(ctx->cfg);
   OfflineStore store;
   store.begin();
-  TelemetrySender sender(ctx->cfg, store);
+  TelemetrySender sender(ctx->cfg, store, ctx->commandQ);
   OtaMgr ota(ctx->cfg, store);
 
   wifi.connect();

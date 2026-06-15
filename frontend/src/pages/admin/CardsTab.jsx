@@ -557,14 +557,24 @@ function EditModal({ card, onClose, onDone }) {
   )
 }
 
-// ─── Admin room NFC reader panel ─────────────────────────────────────────────
+// ─── Scan & auto-assign numbers (admin reader + USB) ─────────────────────────
 
-function AdminReaderPanel({ onRegistered }) {
+function AutoAssignPanel({ cards, nextNumber, onRegistered }) {
   const seenRef = useRef(new Set())
-  const [lastTap, setLastTap] = useState(null)
+  const usbRef = useRef(null)
+  const [source, setSource] = useState('admin') // admin | usb
+  const [usbUid, setUsbUid] = useState('')
+  const [last, setLast] = useState(null)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
+    if (source === 'usb') usbRef.current?.focus()
+  }, [source])
+
+  // Admin NFC reader: backend auto-registers on ASSIGN_SCAN
+  useEffect(() => {
+    if (source !== 'admin') return undefined
     let cancelled = false
 
     async function poll() {
@@ -578,12 +588,14 @@ function AdminReaderPanel({ onRegistered }) {
         for (const s of scans) {
           if (!s.event_id || !s.card_uid || seenRef.current.has(s.event_id)) continue
           seenRef.current.add(s.event_id)
-          setLastTap({
+          const existing = cards.find((c) => c.uid === s.card_uid)
+          setLast({
             uid: s.card_uid,
             cardNumber: s.card_number,
-            status: s.card_status,
+            status: s.card_status || 'AVAILABLE',
             label: s.card_label,
             ts: s.ts,
+            type: existing ? 'existing' : 'new',
           })
           onRegistered()
           return
@@ -594,129 +606,51 @@ function AdminReaderPanel({ onRegistered }) {
     }
 
     poll()
-    const id = setInterval(poll, 1500)
+    const id = setInterval(poll, 1200)
     return () => {
       cancelled = true
       clearInterval(id)
     }
-  }, [onRegistered])
+  }, [source, cards, onRegistered])
 
-  const STAT_COLOR = { AVAILABLE: 'var(--success)', IN_USE: 'var(--warning)', LOST: 'var(--danger)' }
-
-  return (
-    <div style={{
-      background: 'var(--surface)',
-      border: '2px solid var(--brand)',
-      borderRadius: 10,
-      padding: '16px 20px',
-      marginBottom: 20,
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 12,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{
-          width: 8, height: 8, borderRadius: '50%',
-          background: 'var(--brand)',
-          boxShadow: '0 0 6px var(--brand)',
-          animation: 'pulse 1.5s infinite',
-          flexShrink: 0,
-        }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--brand)' }}>Admin Room Reader</span>
-        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
-          — Tap a card on the <strong>admin NFC reader</strong>. New cards get the next number (001, 002…); known cards show their existing number.
-        </span>
-      </div>
-
-      <p style={{ fontSize: 12, color: 'var(--text-3)', margin: 0 }}>
-        Waiting for tap…
-      </p>
-
-      {error && <p className="error" style={{ margin: 0 }}>{error}</p>}
-
-      {lastTap && (
-        <div style={{
-          display: 'flex', gap: 12, alignItems: 'center',
-          background: 'var(--surface-1)',
-          border: '1px solid var(--border)',
-          borderRadius: 8, padding: '12px 14px',
-        }}>
-          <span style={{
-            fontSize: 28, fontWeight: 800, fontFamily: 'var(--mono)',
-            color: STAT_COLOR[lastTap.status] || 'var(--text)',
-          }}>
-            {fmt(lastTap.cardNumber)}
-          </span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, color: 'var(--text-2)', fontWeight: 600 }}>
-              {lastTap.label || 'Card tap'}
-            </div>
-            <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)' }}>{lastTap.uid}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
-              {new Date(lastTap.ts).toLocaleTimeString()}
-            </div>
-          </div>
-          {lastTap.status && (
-            <span className="badge" style={{
-              background: lastTap.status === 'AVAILABLE' ? 'rgba(34,197,94,0.12)'
-                         : lastTap.status === 'IN_USE'    ? 'rgba(245,158,11,0.12)'
-                         : 'rgba(239,68,68,0.12)',
-              color: STAT_COLOR[lastTap.status],
-            }}>
-              {lastTap.status}
-            </span>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ─── RFID Scan Mode panel ─────────────────────────────────────────────────────
-
-function ScanModePanel({ cards, nextNumber, onRegistered }) {
-  const inputRef  = useRef(null)
-  const [uid, setUid]         = useState('')
-  const [result, setResult]   = useState(null) // {type: 'found'|'new', card?}
-  const [loading, setLoading] = useState(false)
-  const [error, setError]     = useState('')
-
-  // Auto-focus whenever panel mounts
-  useEffect(() => { inputRef.current?.focus() }, [])
-
-  function handleKey(e) {
-    if (e.key !== 'Enter') return
-    const scanned = uid.trim().toUpperCase()
-    if (!scanned) return
-    lookupOrRegister(scanned)
-  }
-
-  async function lookupOrRegister(scanned) {
-    setResult(null); setError('')
-    const existing = cards.find((c) => c.uid === scanned)
-    if (existing) {
-      setResult({ type: 'found', card: existing })
-      setUid('')
-      return
-    }
-    // New card — auto-register with next number
+  async function registerUsb(scanned) {
+    const uid = scanned.trim().toUpperCase()
+    if (!uid) return
+    setError('')
     setLoading(true)
     try {
+      const existing = cards.find((c) => c.uid === uid)
+      if (existing) {
+        setLast({
+          uid: existing.uid,
+          cardNumber: existing.card_number,
+          status: existing.status,
+          label: existing.label,
+          type: 'existing',
+        })
+        setLoading(false)
+        return
+      }
       const res = await fetch(`${API_BASE}/v1/admin/cards`, {
         method: 'POST',
         headers: adminHeaders(),
-        body: JSON.stringify({ uid: scanned }),
+        body: JSON.stringify({ uid }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed')
-      setResult({ type: 'registered', card: data })
+      setLast({
+        uid: data.uid || uid,
+        cardNumber: data.card_number,
+        status: data.status || 'AVAILABLE',
+        label: data.label,
+        type: res.status === 201 ? 'new' : 'existing',
+      })
       onRegistered()
     } catch (e) {
       setError(e.message)
     } finally {
       setLoading(false)
-      setUid('')
-      setTimeout(() => inputRef.current?.focus(), 50)
+      setTimeout(() => usbRef.current?.focus(), 50)
     }
   }
 
@@ -726,103 +660,122 @@ function ScanModePanel({ cards, nextNumber, onRegistered }) {
     <div style={{
       background: 'var(--surface)',
       border: '2px solid var(--brand)',
-      borderRadius: 10,
-      padding: '16px 20px',
+      borderRadius: 12,
+      padding: '18px 20px',
       marginBottom: 20,
       display: 'flex',
       flexDirection: 'column',
-      gap: 12,
+      gap: 14,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{
-          width: 8, height: 8, borderRadius: '50%',
-          background: 'var(--brand)',
-          boxShadow: '0 0 6px var(--brand)',
-          animation: 'pulse 1.5s infinite',
-          flexShrink: 0,
-        }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--brand)' }}>RFID Scan Mode</span>
-        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>— USB desktop reader for <strong>registering</strong> cards. To assign a card to a bundle, use the admin room reader in the Bundles tab.</span>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{
+            width: 10, height: 10, borderRadius: '50%',
+            background: 'var(--brand)',
+            boxShadow: '0 0 8px var(--brand)',
+            animation: 'pulse 1.5s infinite',
+            flexShrink: 0,
+          }} />
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--brand)' }}>
+              Scan &amp; Assign — hold card on reader
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
+              Each tap reads the UID and assigns the next number ({fmt(nextNumber)}, {fmt(nextNumber + 1)}…). Already registered cards show their existing number.
+            </div>
+          </div>
+        </div>
+        <div style={{
+          background: 'var(--brand-subtle)', border: '1px solid var(--brand)',
+          borderRadius: 8, padding: '8px 14px', textAlign: 'center', minWidth: 72,
+        }}>
+          <div style={{ fontSize: 10, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Next</div>
+          <div style={{ fontSize: 24, fontWeight: 800, fontFamily: 'var(--mono)', color: 'var(--brand)' }}>
+            {fmt(nextNumber)}
+          </div>
+        </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div className="reconfig-tabs" style={{ margin: 0 }}>
+        {[
+          ['admin', 'Admin NFC reader'],
+          ['usb', 'USB reader'],
+        ].map(([k, lbl]) => (
+          <button
+            key={k}
+            type="button"
+            className={source === k ? 'rtab active' : 'rtab'}
+            onClick={() => { setSource(k); setError('') }}
+          >
+            {lbl}
+          </button>
+        ))}
+      </div>
+
+      {source === 'admin' ? (
+        <p style={{ fontSize: 13, color: 'var(--text-2)', margin: 0, fontWeight: 500 }}>
+          {loading ? 'Processing…' : 'Place card on the admin room reader and hold until it beeps.'}
+        </p>
+      ) : (
         <input
-          ref={inputRef}
-          value={uid}
-          onChange={(e) => setUid(e.target.value.toUpperCase())}
-          onKeyDown={handleKey}
-          placeholder="Scan card UID here…"
-          style={{
-            flex: 1,
-            background: 'var(--surface-1)', border: '1px solid var(--brand)',
-            borderRadius: 6, color: 'var(--text)', fontFamily: 'var(--mono)',
-            fontSize: 14, fontWeight: 700, padding: '9px 12px', outline: 'none',
-            letterSpacing: '0.08em',
+          ref={usbRef}
+          value={usbUid}
+          onChange={(e) => setUsbUid(e.target.value.toUpperCase())}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return
+            const val = usbUid.trim().toUpperCase()
+            if (!val) return
+            setUsbUid('')
+            registerUsb(val)
           }}
+          placeholder="Scan card with USB reader…"
           disabled={loading}
           autoComplete="off"
+          style={{
+            fontFamily: 'var(--mono)', fontWeight: 700, letterSpacing: '0.08em',
+            background: 'var(--surface-1)', border: '1px solid var(--brand)',
+            borderRadius: 8, color: 'var(--text)', fontSize: 15,
+            padding: '12px 14px', outline: 'none', width: '100%',
+          }}
         />
-        <button
-          className="btn-sm btn-primary"
-          onClick={() => lookupOrRegister(uid.trim().toUpperCase())}
-          disabled={loading || !uid.trim()}
-        >
-          {loading ? '…' : 'Lookup'}
-        </button>
-      </div>
+      )}
 
       {error && <p className="error" style={{ margin: 0 }}>{error}</p>}
 
-      {result && (
+      {last && (
         <div style={{
-          display: 'flex', gap: 12, alignItems: 'center',
-          background: result.type === 'registered' ? 'rgba(34,197,94,0.08)' : 'var(--surface-1)',
-          border: `1px solid ${result.type === 'registered' ? 'rgba(34,197,94,0.3)' : 'var(--border)'}`,
-          borderRadius: 8, padding: '12px 14px',
+          display: 'flex', gap: 14, alignItems: 'center',
+          background: last.type === 'new' ? 'rgba(34,197,94,0.1)' : 'var(--surface-1)',
+          border: `1px solid ${last.type === 'new' ? 'rgba(34,197,94,0.35)' : 'var(--border)'}`,
+          borderRadius: 10, padding: '14px 16px',
         }}>
-          {result.type === 'registered' && (
-            <>
-              <span style={{ fontSize: 22, fontWeight: 800, color: 'var(--success)', fontFamily: 'var(--mono)' }}>
-                {fmt(result.card.card_number)}
-              </span>
-              <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
-                <div>New card registered!</div>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)' }}>{result.card.uid}</div>
+          <span style={{
+            fontSize: 36, fontWeight: 800, fontFamily: 'var(--mono)', lineHeight: 1,
+            color: last.type === 'new' ? 'var(--success)' : (STAT_COLOR[last.status] || 'var(--text)'),
+          }}>
+            {fmt(last.cardNumber)}
+          </span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+              {last.type === 'new' ? 'Registered' : 'Already registered'}
+            </div>
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--text-3)', marginTop: 2 }}>
+              {last.uid}
+            </div>
+            {last.ts && (
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+                {new Date(last.ts).toLocaleTimeString()}
               </div>
-              <span className="badge badge-green" style={{ marginLeft: 'auto' }}>AVAILABLE</span>
-            </>
-          )}
-          {result.type === 'found' && (
-            <>
-              <span style={{
-                fontSize: 22, fontWeight: 800, fontFamily: 'var(--mono)',
-                color: STAT_COLOR[result.card.status] || 'var(--text)',
-              }}>
-                {fmt(result.card.card_number)}
-              </span>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 12, color: 'var(--text-2)', fontWeight: 600 }}>
-                  {result.card.label || result.card.uid}
-                </div>
-                {result.card.label && (
-                  <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-3)' }}>{result.card.uid}</div>
-                )}
-                {result.card.status === 'IN_USE' && result.card.current_bundle_id && (
-                  <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 2 }}>
-                    On bundle {result.card.current_bundle_id.slice(0, 8)}… · {result.card.contractor_name || ''} · {result.card.line_name || ''}
-                  </div>
-                )}
-              </div>
-              <span className="badge" style={{
-                background: result.card.status === 'AVAILABLE' ? 'rgba(34,197,94,0.12)'
-                           : result.card.status === 'IN_USE'    ? 'rgba(245,158,11,0.12)'
-                           : 'rgba(239,68,68,0.12)',
-                color: STAT_COLOR[result.card.status],
-              }}>
-                {result.card.status}
-              </span>
-            </>
-          )}
+            )}
+          </div>
+          <span className="badge" style={{
+            background: last.status === 'AVAILABLE' ? 'rgba(34,197,94,0.12)'
+                       : last.status === 'IN_USE'    ? 'rgba(245,158,11,0.12)'
+                       : 'rgba(239,68,68,0.12)',
+            color: STAT_COLOR[last.status] || 'var(--text-3)',
+          }}>
+            {last.status || 'AVAILABLE'}
+          </span>
         </div>
       )}
     </div>
@@ -839,8 +792,7 @@ export default function CardsTab() {
   const [showRange, setShowRange] = useState(false)
   const [editCard, setEditCard] = useState(null)
   const [filter, setFilter]     = useState('ALL')
-  const [scanMode, setScanMode] = useState(false)
-  const [adminReader, setAdminReader] = useState(false)
+  const [autoAssign, setAutoAssign] = useState(false)
   const [highlightUid, setHighlightUid] = useState(null)
   const [registerUid, setRegisterUid] = useState(null)
 
@@ -894,34 +846,26 @@ export default function CardsTab() {
       <div className="section-header">
         <h2>Card Registry</h2>
         <button
-          className={scanMode ? 'btn-sm btn-primary' : 'btn-sm'}
-          onClick={() => { setScanMode((v) => !v); setAdminReader(false) }}
-          style={scanMode ? { boxShadow: '0 0 0 2px var(--brand)' } : {}}
+          className="btn-sm btn-primary"
+          onClick={() => setAutoAssign((v) => !v)}
+          style={autoAssign ? {
+            boxShadow: '0 0 0 2px var(--brand)',
+            background: 'var(--brand)',
+          } : {}}
         >
-          {scanMode ? '● USB Scan ON' : 'USB Scan'}
+          {autoAssign ? '● Scan & Assign ON' : 'Scan & Assign'}
         </button>
-        <button
-          className={adminReader ? 'btn-sm btn-primary' : 'btn-sm'}
-          onClick={() => { setAdminReader((v) => !v); setScanMode(false) }}
-          style={adminReader ? { boxShadow: '0 0 0 2px var(--brand)' } : {}}
-        >
-          {adminReader ? '● Admin Reader ON' : 'Admin Reader'}
-        </button>
-        <button className="btn-sm btn-primary" onClick={() => setShowReg(true)}>+ Register Card</button>
+        <button className="btn-sm" onClick={() => setShowReg(true)}>+ Register Card</button>
         <button className="btn-sm" onClick={() => setShowRange(true)}>+ Register Range</button>
         <button className="btn-sm" onClick={load}>Refresh</button>
       </div>
 
-      {/* RFID Scan Mode */}
-      {scanMode && (
-        <ScanModePanel cards={cards} nextNumber={nextNumber} onRegistered={load} />
-      )}
-      {adminReader && (
-        <AdminReaderPanel onRegistered={load} />
+      {autoAssign && (
+        <AutoAssignPanel cards={cards} nextNumber={nextNumber} onRegistered={load} />
       )}
 
       {/* Scan lookup in registered list */}
-      {!loading && cards.length > 0 && (
+      {!loading && cards.length > 0 && !autoAssign && (
         <ScanLookupBar
           cards={cards}
           onHighlight={setHighlightUid}
