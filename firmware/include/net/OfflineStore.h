@@ -19,6 +19,7 @@ class OfflineStore {
   static constexpr const char* kPath = "/q.log";
   static constexpr size_t kRecordSize = 160;
   static constexpr size_t kMaxRecords = 4000;
+  static constexpr size_t kBootClearThreshold = 64;
 
   size_t _headOffset = 0;
   size_t _depth = 0;

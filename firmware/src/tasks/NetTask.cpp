@@ -100,6 +100,7 @@ void netLoop(void* param) {
   syncTime();
 
   uint32_t lastHeartbeatMs = 0;
+  uint32_t bootMs = millis();
   for (;;) {
     wifi.loop();
 
@@ -123,17 +124,22 @@ void netLoop(void* param) {
       }
     }
 
-    uint8_t drainBudget = 8;
-    while (!store.empty() && wifi.isConnected() && drainBudget > 0) {
-      TelemetryEvent queued{};
-      if (!store.pop(queued)) {
-        Serial.println("[NET] offline drain failed — queue reset");
-        break;
-      }
-      drainBudget--;
-      if (!sender.send(queued)) {
-        store.push(queued);
-        break;
+    uint8_t drainBudget = 4;
+    if (!store.empty() && wifi.isConnected() && (millis() - bootMs) >= 5000) {
+      while (drainBudget > 0) {
+        TelemetryEvent queued{};
+        if (!store.pop(queued)) {
+          Serial.println("[NET] offline drain failed — queue reset");
+          break;
+        }
+        drainBudget--;
+        if (!sender.send(queued)) {
+          store.push(queued);
+          break;
+        }
+        if (store.empty()) {
+          break;
+        }
       }
     }
 

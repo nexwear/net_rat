@@ -6,14 +6,21 @@
 namespace {
 constexpr const char* kCfgNs = "cfg";
 constexpr const char* kOfflineStoreVerKey = "offlineStoreVer";
-constexpr int kOfflineStoreVer = 2;
+constexpr int kOfflineStoreVer = 3;
+constexpr size_t kRecordBytes = 160;
+
+void copyRecordToEvent(const uint8_t* buf, TelemetryEvent& ev) {
+  memset(&ev, 0, sizeof(ev));
+  const size_t n = sizeof(TelemetryEvent) < kRecordBytes ? sizeof(TelemetryEvent) : kRecordBytes;
+  memcpy(&ev, buf, n);
+}
 }  // namespace
 
 bool OfflineStore::validateQueueFile(size_t fileSize) {
   if (fileSize == 0) {
     return true;
   }
-  if (fileSize % kRecordSize != 0) {
+  if (kRecordSize == 0 || fileSize % kRecordSize != 0) {
     return false;
   }
   if (fileSize / kRecordSize > kMaxRecords) {
@@ -75,15 +82,21 @@ bool OfflineStore::begin() {
   Preferences prefs;
   if (prefs.begin(kCfgNs, false)) {
     const int storeVer = prefs.getInt(kOfflineStoreVerKey, 1);
-    if (storeVer < kOfflineStoreVer && _depth > 0) {
-      Serial.printf("[FS] migrating offline queue — cleared %u stale events\n",
-                    static_cast<unsigned>(_depth));
-      resetQueue();
-    }
     if (storeVer < kOfflineStoreVer) {
+      if (_depth > 0) {
+        Serial.printf("[FS] migrating offline queue v%d — cleared %u stale events\n",
+                      kOfflineStoreVer, static_cast<unsigned>(_depth));
+        resetQueue();
+      }
       prefs.putInt(kOfflineStoreVerKey, kOfflineStoreVer);
     }
     prefs.end();
+  }
+
+  if (_depth > kBootClearThreshold) {
+    Serial.printf("[FS] queue depth %u too large — clearing for recovery\n",
+                  static_cast<unsigned>(_depth));
+    resetQueue();
   }
 
   _ready = true;
@@ -109,7 +122,9 @@ bool OfflineStore::push(const TelemetryEvent& ev) {
   }
 
   uint8_t buf[kRecordSize] = {};
-  memcpy(buf, &ev, sizeof(TelemetryEvent) > kRecordSize ? kRecordSize : sizeof(TelemetryEvent));
+  memset(buf, 0, kRecordSize);
+  const size_t n = sizeof(TelemetryEvent) < kRecordSize ? sizeof(TelemetryEvent) : kRecordSize;
+  memcpy(buf, &ev, n);
   const bool ok = f.write(buf, kRecordSize) == kRecordSize;
   f.close();
   if (!ok) {
@@ -148,11 +163,11 @@ bool OfflineStore::pop(TelemetryEvent& ev) {
   }
   f.close();
 
-  memcpy(&ev, buf, sizeof(TelemetryEvent));
+  copyRecordToEvent(buf, ev);
   _headOffset += kRecordSize;
   _depth--;
 
-  if (_depth == 0) {
+  if (_depth == 0 || _headOffset + kRecordSize > fileSize) {
     resetQueue();
   }
   return true;
