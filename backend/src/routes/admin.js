@@ -100,6 +100,61 @@ router.post('/nodes/:nodeId/reconfig', async (req, res) => {
   }
 });
 
+// ─── Live dashboard snapshot ─────────────────────────────────────────────────
+
+router.get('/dashboard', async (_req, res) => {
+  try {
+    const { rows } = await query(`
+      SELECT
+        l.id   AS line_id,   l.name AS line_name,
+        n.id   AS node_id,   n.module_type, n.status AS node_status,
+        n.last_seen_at, n.rssi, n.fw_version,
+        s.id   AS session_id, s.bundle_id, s.card_uid,
+        s.start_ts, s.count_pass, s.count_cycle,
+        b.declared_pieces, b.status AS bundle_status
+      FROM lines l
+      LEFT JOIN nodes n ON n.line_id = l.id
+      LEFT JOIN sessions s ON s.node_id = n.id AND s.end_ts IS NULL
+      LEFT JOIN bundles b ON b.id = s.bundle_id
+      ORDER BY l.id,
+        CASE n.module_type
+          WHEN 'INPUT'    THEN 1 WHEN 'OUTPUT_1' THEN 2
+          WHEN 'OUTPUT_2' THEN 3 WHEN 'ADMIN'    THEN 4 ELSE 5 END
+    `);
+
+    const linesMap = new Map();
+    for (const row of rows) {
+      if (!linesMap.has(row.line_id)) {
+        linesMap.set(row.line_id, { id: row.line_id, name: row.line_name, nodes: [] });
+      }
+      if (row.node_id) {
+        linesMap.get(row.line_id).nodes.push({
+          nodeId: row.node_id,
+          moduleType: row.module_type,
+          status: row.node_status,
+          lastSeenAt: row.last_seen_at,
+          rssi: row.rssi,
+          fwVersion: row.fw_version,
+          session: row.session_id ? {
+            sessionId: row.session_id,
+            bundleId: row.bundle_id,
+            cardUid: row.card_uid,
+            startTs: row.start_ts,
+            countPass: row.count_pass ?? 0,
+            countCycle: row.count_cycle ?? 0,
+            declaredPieces: row.declared_pieces,
+          } : null,
+        });
+      }
+    }
+
+    res.json(Array.from(linesMap.values()));
+  } catch (err) {
+    console.error('dashboard error', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Alerts ────────────────────────────────────────────────────────────────
 
 router.get('/alerts', async (req, res) => {

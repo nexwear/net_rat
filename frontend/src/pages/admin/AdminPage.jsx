@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import DashboardTab from './DashboardTab.jsx'
 import NodesTab from './NodesTab.jsx'
 import OtaTab from './OtaTab.jsx'
 import BundlesTab from './BundlesTab.jsx'
@@ -17,7 +18,7 @@ export function adminHeaders() {
 }
 
 export default function AdminPage() {
-  const [tab, setTab] = useState('nodes')
+  const [tab, setTab] = useState('dashboard')
 
   return (
     <div className="admin-layout">
@@ -25,7 +26,7 @@ export default function AdminPage() {
         <Link to="/" className="admin-back">← Factory Pilot</Link>
         <h1>Admin</h1>
         <nav className="admin-tabs">
-          {[['nodes','Nodes'],['bundles','Bundles'],['ota','OTA'],['alerts','Alerts']].map(([k,label]) => (
+          {[['dashboard','Dashboard'],['nodes','Nodes'],['bundles','Bundles'],['ota','OTA'],['alerts','Alerts']].map(([k,label]) => (
             <button key={k} className={tab === k ? 'tab active' : 'tab'} onClick={() => setTab(k)}>
               {label}
             </button>
@@ -33,6 +34,7 @@ export default function AdminPage() {
         </nav>
       </header>
       <main className="admin-main">
+        {tab === 'dashboard' && <DashboardTab />}
         {tab === 'nodes' && <NodesTab />}
         {tab === 'bundles' && <BundlesTab />}
         {tab === 'ota' && <OtaTab />}

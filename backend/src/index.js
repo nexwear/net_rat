@@ -1,3 +1,4 @@
+const http = require('http');
 const express = require('express');
 const { initDb } = require('./db');
 const deviceRoutes = require('./routes/devices');
@@ -9,19 +10,16 @@ const otaRoutes = require('./routes/ota');
 const adminRoutes = require('./routes/admin');
 const { ensureFirmwareDir } = require('./services/ota');
 const offlineWatcher = require('./services/offlineWatcher');
+const broker = require('./services/broker');
+const mqttClient = require('./services/mqttClient');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
 app.use(express.json());
 
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'backend' });
-});
-
-app.get('/healthz', (_req, res) => {
-  res.json({ status: 'ok' });
-});
+app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'backend' }));
+app.get('/healthz', (_req, res) => res.json({ status: 'ok' }));
 
 app.use('/v1/devices', deviceRoutes);
 app.use('/v1', cardRoutes);
@@ -31,6 +29,8 @@ app.use('/v1', otaRoutes);
 app.use('/v1', ingestRoutes);
 app.use('/v1/admin', adminRoutes);
 
+const server = http.createServer(app);
+
 async function start() {
   try {
     await initDb();
@@ -38,15 +38,16 @@ async function start() {
     console.log('Database ready');
   } catch (err) {
     console.error('Database init failed:', err.message);
-    if (process.env.REQUIRE_DB !== 'false') {
-      process.exit(1);
-    }
+    if (process.env.REQUIRE_DB !== 'false') process.exit(1);
   }
 
-  app.listen(PORT, () => {
+  broker.attach(server);
+  mqttClient.connect();
+
+  server.listen(PORT, () => {
     console.log(`Backend running on port ${PORT}`);
     if (process.env.AUTO_APPROVE_DEVICES === 'true') {
-      console.log('AUTO_APPROVE_DEVICES enabled — new claims activate immediately');
+      console.log('AUTO_APPROVE_DEVICES enabled');
     }
     offlineWatcher.start();
     console.log('Offline watcher started (30s interval)');
