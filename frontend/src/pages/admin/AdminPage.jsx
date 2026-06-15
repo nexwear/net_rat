@@ -4,6 +4,7 @@ import DashboardTab from './DashboardTab.jsx'
 import NodesTab from './NodesTab.jsx'
 import OtaTab from './OtaTab.jsx'
 import BundlesTab from './BundlesTab.jsx'
+import CardsTab from './CardsTab.jsx'
 import AlertsTab from './AlertsTab.jsx'
 import UsersTab from './UsersTab.jsx'
 import { getUser, clearAuth, authHeaders, apiFetch } from '../../auth.js'
@@ -15,10 +16,10 @@ export const API_BASE = '/api'
 export { authHeaders as adminHeaders, apiFetch }
 
 const ROLE_PERMS = {
-  SUPER_ADMIN:     ['dashboard','nodes','bundles','ota','alerts','users'],
-  FACTORY_ADMIN:   ['dashboard','nodes','bundles','ota','alerts','users'],
+  SUPER_ADMIN:     ['dashboard','nodes','bundles','cards','ota','alerts','users'],
+  FACTORY_ADMIN:   ['dashboard','nodes','bundles','cards','ota','alerts','users'],
   LINE_SUPERVISOR: ['dashboard','nodes','alerts'],
-  ADMIN_OPERATOR:  ['dashboard','nodes','bundles'],
+  ADMIN_OPERATOR:  ['dashboard','nodes','bundles','cards'],
   AUDITOR:         ['dashboard'],
   CONTRACTOR:      ['dashboard'],
 }
@@ -29,6 +30,7 @@ function tabsForRole(role) {
     { key: 'dashboard', label: 'Dashboard' },
     { key: 'nodes',     label: 'Nodes'     },
     { key: 'bundles',   label: 'Bundles'   },
+    { key: 'cards',     label: 'Cards'     },
     { key: 'ota',       label: 'OTA'       },
     { key: 'alerts',    label: 'Alerts'    },
     { key: 'users',     label: 'Users'     },
@@ -100,6 +102,7 @@ export default function AdminPage() {
         {tab === 'dashboard' && <DashboardTab />}
         {tab === 'nodes'     && <NodesTab />}
         {tab === 'bundles'   && <BundlesTab />}
+        {tab === 'cards'     && <CardsTab />}
         {tab === 'ota'       && <OtaTab />}
         {tab === 'alerts'    && <AlertsTab />}
         {tab === 'users'     && <UsersTab />}

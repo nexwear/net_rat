@@ -133,20 +133,44 @@ function CreateBundlePanel({ onCreated }) {
   )
 }
 
+function fmt(n) {
+  return n != null ? String(n).padStart(3, '0') : null
+}
+
 function AssignCardModal({ bundle, onClose, onDone }) {
-  const [cardUid, setCardUid] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [available, setAvailable] = useState([])
+  const [selected, setSelected]   = useState('')
+  const [manualUid, setManualUid] = useState('')
+  const [useManual, setUseManual] = useState(false)
+  const [loading, setLoading]     = useState(false)
+  const [fetching, setFetching]   = useState(true)
+  const [error, setError]         = useState('')
+
+  useEffect(() => {
+    fetch(`${API_BASE}/v1/admin/cards/available`, { headers: adminHeaders() })
+      .then((r) => r.json())
+      .then((data) => {
+        setAvailable(Array.isArray(data) ? data : [])
+        if (data.length > 0) setSelected(String(data[0].card_number ?? ''))
+      })
+      .catch(() => setUseManual(true))
+      .finally(() => setFetching(false))
+  }, [])
 
   async function submit() {
-    if (!cardUid.trim()) return setError('Card UID required')
-    setLoading(true)
-    setError('')
+    setLoading(true); setError('')
     try {
+      const body = useManual
+        ? { cardUid: manualUid.trim().toUpperCase() }
+        : { cardNumber: Number(selected) }
+
+      if (useManual && !manualUid.trim()) throw new Error('Card UID required')
+      if (!useManual && !selected) throw new Error('Select a card')
+
       const res = await fetch(`${API_BASE}/v1/admin/bundles/${bundle.id}/assign-card`, {
         method: 'POST',
         headers: adminHeaders(),
-        body: JSON.stringify({ cardUid: cardUid.trim().toUpperCase() }),
+        body: JSON.stringify(body),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed')
@@ -162,18 +186,51 @@ function AssignCardModal({ bundle, onClose, onDone }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Assign Card</h2>
-        <p className="modal-node-id">Bundle {bundle.id.slice(0, 8)}… · {bundle.declared_pieces} pcs</p>
-        <label>Card UID (hex)</label>
-        <input
-          value={cardUid}
-          onChange={(e) => setCardUid(e.target.value)}
-          placeholder="e.g. A1B2C3D4"
-          autoFocus
-        />
+        <p className="modal-node-id">Bundle {bundle.id.slice(0, 8)}… · {bundle.declared_pieces} pcs · {bundle.contractor_name || 'no contractor'}</p>
+
+        {!useManual ? (
+          <>
+            <label>Select Available Card</label>
+            {fetching ? (
+              <p style={{ color: 'var(--text-3)', fontSize: 12 }}>Loading available cards…</p>
+            ) : available.length === 0 ? (
+              <p className="warn-text">No registered cards available. Register cards in the Cards tab first, or enter a UID manually.</p>
+            ) : (
+              <select value={selected} onChange={(e) => setSelected(e.target.value)} autoFocus>
+                {available.map((c) => (
+                  <option key={c.uid} value={String(c.card_number)}>
+                    {fmt(c.card_number)}{c.label ? ` — ${c.label}` : ''} ({c.uid})
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              style={{ fontSize: 11, color: 'var(--text-3)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}
+              onClick={() => setUseManual(true)}
+            >
+              Enter UID manually instead →
+            </button>
+          </>
+        ) : (
+          <>
+            <label>Card UID (hex)</label>
+            <input value={manualUid} onChange={(e) => setManualUid(e.target.value)}
+              placeholder="e.g. A1B2C3D4" autoFocus />
+            <button
+              style={{ fontSize: 11, color: 'var(--text-3)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}
+              onClick={() => setUseManual(false)}
+            >
+              ← Pick from registered cards
+            </button>
+          </>
+        )}
+
         {error && <p className="error">{error}</p>}
+
         <div className="modal-actions">
           <button onClick={onClose} disabled={loading}>Cancel</button>
-          <button className="btn-primary" onClick={submit} disabled={loading}>
+          <button className="btn-sm btn-primary" onClick={submit}
+            disabled={loading || (!useManual && available.length === 0 && !fetching)}>
             {loading ? 'Assigning…' : 'Assign'}
           </button>
         </div>
@@ -263,7 +320,16 @@ export default function BundlesTab() {
                   <td>{b.contractor_name || '—'}</td>
                   <td>{b.declared_pieces}</td>
                   <td><StatusBadge status={b.status} /></td>
-                  <td className="mono">{b.assigned_card_uid || b.card_uid || '—'}</td>
+                  <td>
+                    {b.assigned_card_number != null
+                      ? <span style={{ fontFamily: 'var(--mono)', fontWeight: 700 }}>{fmt(b.assigned_card_number)}</span>
+                      : b.assigned_card_uid || b.card_uid
+                      ? <span className="mono" style={{ fontSize: 11 }}>{b.assigned_card_uid || b.card_uid}</span>
+                      : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                    {b.assigned_card_label && (
+                      <span style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 5 }}>{b.assigned_card_label}</span>
+                    )}
+                  </td>
                   <td style={{ fontSize: 11, color: '#7a8bb0' }}>
                     {b.created_at ? new Date(b.created_at).toLocaleString() : '—'}
                   </td>

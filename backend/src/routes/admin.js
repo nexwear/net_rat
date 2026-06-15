@@ -227,6 +227,148 @@ router.get('/sizes', async (_req, res) => {
   }
 });
 
+// ─── Card Registry ───────────────────────────────────────────────────────────
+
+router.get('/cards', async (_req, res) => {
+  try {
+    const { rows } = await query(`
+      SELECT c.uid, c.card_number, c.label, c.status, c.registered_at,
+             c.current_bundle_id,
+             b.status AS bundle_status, b.declared_pieces,
+             cnt.name AS contractor_name,
+             l.name AS line_name
+      FROM cards c
+      LEFT JOIN bundles b ON b.id = c.current_bundle_id
+      LEFT JOIN contractors cnt ON cnt.id = b.contractor_id
+      LEFT JOIN lines l ON l.id = b.line_id
+      ORDER BY c.card_number NULLS LAST, c.uid
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Must be before /:uid to avoid route collision
+router.get('/cards/available', async (_req, res) => {
+  try {
+    const { rows } = await query(`
+      SELECT uid, card_number, label, status
+      FROM cards WHERE status = 'AVAILABLE'
+      ORDER BY card_number NULLS LAST, uid
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/cards', requirePerm('cards.pool'), async (req, res) => {
+  try {
+    const { uid, cardNumber, label } = req.body || {};
+    if (!uid) return res.status(400).json({ error: 'uid required' });
+
+    let num = cardNumber != null ? Number(cardNumber) : null;
+    if (num == null) {
+      const { rows } = await query('SELECT COALESCE(MAX(card_number), 0) + 1 AS next FROM cards');
+      num = rows[0].next;
+    }
+
+    const { rows } = await query(
+      `INSERT INTO cards (uid, family, status, card_number, label)
+       VALUES ($1, 'UNKNOWN', 'AVAILABLE', $2, $3)
+       ON CONFLICT (uid) DO UPDATE SET card_number = $2, label = COALESCE($3, cards.label)
+       RETURNING uid, card_number, label, status`,
+      [uid.trim().toUpperCase(), num, label || null]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'card number already taken' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/cards/register-range', requirePerm('cards.pool'), async (req, res) => {
+  try {
+    const { uids, startNumber, labels } = req.body || {};
+    if (!Array.isArray(uids) || uids.length === 0) {
+      return res.status(400).json({ error: 'uids array required' });
+    }
+
+    let start = Number(startNumber);
+    if (!start) {
+      const { rows } = await query('SELECT COALESCE(MAX(card_number), 0) + 1 AS next FROM cards');
+      start = rows[0].next;
+    }
+
+    const results = [];
+    for (let i = 0; i < uids.length; i++) {
+      const uid = uids[i]?.trim().toUpperCase();
+      if (!uid) continue;
+      const num = start + i;
+      const lbl = Array.isArray(labels) ? (labels[i] || null) : null;
+      try {
+        const { rows } = await query(
+          `INSERT INTO cards (uid, family, status, card_number, label)
+           VALUES ($1, 'UNKNOWN', 'AVAILABLE', $2, $3)
+           ON CONFLICT (uid) DO UPDATE SET card_number = $2, label = COALESCE($3, cards.label)
+           RETURNING uid, card_number, label, status`,
+          [uid, num, lbl]
+        );
+        results.push({ ...rows[0], ok: true });
+      } catch (e) {
+        results.push({ uid, card_number: num, ok: false, error: e.message });
+      }
+    }
+
+    res.json({ registered: results.filter((r) => r.ok).length, total: uids.length, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/cards/:uid', requirePerm('cards.pool'), async (req, res) => {
+  try {
+    const { cardNumber, label } = req.body || {};
+    const uid = req.params.uid.toUpperCase();
+    const sets = [];
+    const vals = [uid];
+    if (cardNumber != null) { vals.push(Number(cardNumber)); sets.push(`card_number = $${vals.length}`); }
+    if (label      != null) { vals.push(label);              sets.push(`label = $${vals.length}`); }
+    if (!sets.length) return res.status(400).json({ error: 'nothing to update' });
+
+    const { rows } = await query(
+      `UPDATE cards SET ${sets.join(', ')} WHERE uid = $1 RETURNING uid, card_number, label, status`,
+      vals
+    );
+    if (!rows.length) return res.status(404).json({ error: 'card not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'card number already taken' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/cards/:uid/release', requirePerm('cards.pool'), async (req, res) => {
+  try {
+    const uid = req.params.uid.toUpperCase();
+    const { rows: card } = await query('SELECT current_bundle_id FROM cards WHERE uid = $1', [uid]);
+    if (!card.length) return res.status(404).json({ error: 'card not found' });
+
+    if (card[0].current_bundle_id) {
+      await query('UPDATE bundles SET card_uid = NULL WHERE id = $1', [card[0].current_bundle_id]);
+    }
+    const { rows } = await query(
+      `UPDATE cards SET status = 'AVAILABLE', current_bundle_id = NULL WHERE uid = $1
+       RETURNING uid, card_number, label, status`,
+      [uid]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/lines', async (_req, res) => {
   try {
     const { rows } = await query('SELECT * FROM lines ORDER BY id');
@@ -246,7 +388,9 @@ router.get('/bundles', async (req, res) => {
              c.name AS contractor_name, g.style AS garment_model,
              sz.label AS size_label,
              l.name AS line_name,
-             card.uid AS assigned_card_uid
+             card.uid AS assigned_card_uid,
+             card.card_number AS assigned_card_number,
+             card.label AS assigned_card_label
       FROM bundles b
       LEFT JOIN contractors c ON c.id = b.contractor_id
       LEFT JOIN garment_models g ON g.id = b.garment_model_id
@@ -291,39 +435,47 @@ router.post('/bundles', async (req, res) => {
 
 router.post('/bundles/:bundleId/assign-card', async (req, res) => {
   try {
-    const { cardUid } = req.body || {};
-    if (!cardUid) return res.status(400).json({ error: 'cardUid required' });
+    const { cardUid, cardNumber } = req.body || {};
+    let uid = cardUid ? cardUid.trim().toUpperCase() : null;
+
+    // Resolve by card number if no uid provided
+    if (!uid && cardNumber != null) {
+      const { rows } = await query(
+        'SELECT uid, status FROM cards WHERE card_number = $1',
+        [Number(cardNumber)]
+      );
+      if (!rows.length) return res.status(404).json({ error: `Card #${cardNumber} is not registered` });
+      if (rows[0].status !== 'AVAILABLE') {
+        return res.status(409).json({ error: `Card #${String(cardNumber).padStart(3,'0')} is ${rows[0].status} — not available` });
+      }
+      uid = rows[0].uid;
+    }
+
+    if (!uid) return res.status(400).json({ error: 'cardUid or cardNumber required' });
 
     const { bundleId } = req.params;
-
-    // Check bundle exists
     const { rows: bundles } = await query('SELECT id FROM bundles WHERE id = $1', [bundleId]);
     if (!bundles.length) return res.status(404).json({ error: 'bundle not found' });
 
-    // Check card not already in use on another bundle
-    const { rows: existing } = await query(
-      `SELECT current_bundle_id FROM cards WHERE uid = $1`,
-      [cardUid]
-    );
+    // Check not already assigned to a different bundle
+    const { rows: existing } = await query('SELECT current_bundle_id, status FROM cards WHERE uid = $1', [uid]);
     if (existing.length > 0 && existing[0].current_bundle_id && existing[0].current_bundle_id !== bundleId) {
-      return res.status(409).json({ error: 'card already assigned to another bundle' });
+      return res.status(409).json({ error: 'card is already assigned to another bundle' });
+    }
+    if (existing.length > 0 && existing[0].status === 'IN_USE' && existing[0].current_bundle_id !== bundleId) {
+      return res.status(409).json({ error: 'card is currently IN_USE' });
     }
 
-    // Upsert card and assign
     await query(
       `INSERT INTO cards (uid, family, status, current_bundle_id)
        VALUES ($1, 'UNKNOWN', 'IN_USE', $2)
-       ON CONFLICT (uid) DO UPDATE
-       SET status = 'IN_USE', current_bundle_id = $2`,
-      [cardUid, bundleId]
+       ON CONFLICT (uid) DO UPDATE SET status = 'IN_USE', current_bundle_id = $2`,
+      [uid, bundleId]
     );
+    await query('UPDATE bundles SET card_uid = $1 WHERE id = $2', [uid, bundleId]);
 
-    await query(
-      `UPDATE bundles SET card_uid = $1 WHERE id = $2`,
-      [cardUid, bundleId]
-    );
-
-    res.json({ ok: true, bundleId, cardUid });
+    const { rows: info } = await query('SELECT card_number, label FROM cards WHERE uid = $1', [uid]);
+    res.json({ ok: true, bundleId, cardUid: uid, cardNumber: info[0]?.card_number, label: info[0]?.label });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
