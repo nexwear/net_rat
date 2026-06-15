@@ -2,6 +2,32 @@
 #include <Arduino.h>
 #include <cstring>
 
+bool OfflineStore::validateQueueFile(size_t fileSize) {
+  if (fileSize == 0) {
+    return true;
+  }
+  if (fileSize % kRecordSize != 0) {
+    return false;
+  }
+  if (fileSize / kRecordSize > kMaxRecords) {
+    return false;
+  }
+  return true;
+}
+
+void OfflineStore::resetQueue() {
+  if (LittleFS.exists(kPath)) {
+    LittleFS.remove(kPath);
+  }
+  File create = LittleFS.open(kPath, FILE_WRITE);
+  if (create) {
+    create.close();
+  }
+  _headOffset = 0;
+  _depth = 0;
+  _overflow = false;
+}
+
 bool OfflineStore::begin() {
   if (!LittleFS.begin(false)) {
     Serial.println("[FS] LittleFS corrupt — formatting...");
@@ -12,78 +38,100 @@ bool OfflineStore::begin() {
   }
 
   if (!LittleFS.exists(kPath)) {
-    File create = LittleFS.open(kPath, FILE_WRITE);
-    if (create) {
-      create.close();
-    }
+    resetQueue();
+    _ready = true;
+    Serial.println("[FS] Offline queue ready (depth 0)");
+    return true;
   }
 
-  _file = LittleFS.open(kPath, FILE_APPEND);
-  if (!_file) {
-    _file = LittleFS.open(kPath, FILE_WRITE);
+  File f = LittleFS.open(kPath, FILE_READ);
+  if (!f) {
+    resetQueue();
+    _ready = true;
+    Serial.println("[FS] Offline queue reset (open failed)");
+    return true;
   }
-  _ready = static_cast<bool>(_file);
-  if (_ready) {
-    _depth = _file.size() / kRecordSize;
-    _file.close();
-    Serial.printf("[FS] Offline queue ready (depth %u)\n", static_cast<unsigned>(_depth));
+
+  const size_t fileSize = f.size();
+  f.close();
+
+  if (!validateQueueFile(fileSize)) {
+    Serial.printf("[FS] corrupt queue (%u bytes) — resetting\n", static_cast<unsigned>(fileSize));
+    resetQueue();
+    _ready = true;
+    return true;
   }
-  return _ready;
+
+  _headOffset = 0;
+  _depth = fileSize / kRecordSize;
+  _ready = true;
+  Serial.printf("[FS] Offline queue ready (depth %u)\n", static_cast<unsigned>(_depth));
+  return true;
 }
 
 bool OfflineStore::empty() const { return _depth == 0; }
 
 bool OfflineStore::push(const TelemetryEvent& ev) {
-  if (!_ready) return false;
+  if (!_ready) {
+    return false;
+  }
+
+  if (_depth >= kMaxRecords) {
+    _overflow = true;
+    return false;
+  }
 
   File f = LittleFS.open(kPath, FILE_APPEND);
-  if (!f) return false;
+  if (!f) {
+    return false;
+  }
 
   uint8_t buf[kRecordSize] = {};
   memcpy(buf, &ev, sizeof(TelemetryEvent) > kRecordSize ? kRecordSize : sizeof(TelemetryEvent));
-  f.write(buf, kRecordSize);
+  const bool ok = f.write(buf, kRecordSize) == kRecordSize;
   f.close();
+  if (!ok) {
+    return false;
+  }
 
   _depth++;
-  if (_depth > kMaxRecords) {
-    _overflow = true;
-    // Drop oldest: truncate front by rewriting is expensive; flag overflow for MVP
-    _depth = kMaxRecords;
-  }
   return true;
 }
 
 bool OfflineStore::pop(TelemetryEvent& ev) {
-  if (!_ready || _depth == 0) return false;
+  if (!_ready || _depth == 0) {
+    return false;
+  }
 
   File f = LittleFS.open(kPath, FILE_READ);
-  if (!f) return false;
+  if (!f) {
+    resetQueue();
+    return false;
+  }
 
+  const size_t fileSize = f.size();
+  if (!validateQueueFile(fileSize) || _headOffset + kRecordSize > fileSize) {
+    f.close();
+    Serial.println("[FS] queue corrupt during pop — resetting");
+    resetQueue();
+    return false;
+  }
+
+  f.seek(_headOffset);
   uint8_t buf[kRecordSize] = {};
   if (f.read(buf, kRecordSize) != kRecordSize) {
     f.close();
+    resetQueue();
     return false;
   }
   f.close();
+
   memcpy(&ev, buf, sizeof(TelemetryEvent));
-
-  // Shift file: read remainder and rewrite (simple MVP)
-  File src = LittleFS.open(kPath, FILE_READ);
-  File dst = LittleFS.open("/q.tmp", FILE_WRITE);
-  if (!src || !dst) {
-    if (src) src.close();
-    if (dst) dst.close();
-    return false;
-  }
-  src.seek(kRecordSize);
-  while (src.available()) {
-    dst.write(src.read());
-  }
-  src.close();
-  dst.close();
-  LittleFS.remove(kPath);
-  LittleFS.rename("/q.tmp", kPath);
-
+  _headOffset += kRecordSize;
   _depth--;
+
+  if (_depth == 0) {
+    resetQueue();
+  }
   return true;
 }

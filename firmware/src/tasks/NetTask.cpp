@@ -123,11 +123,14 @@ void netLoop(void* param) {
       }
     }
 
-    while (!store.empty() && wifi.isConnected()) {
+    uint8_t drainBudget = 8;
+    while (!store.empty() && wifi.isConnected() && drainBudget > 0) {
       TelemetryEvent queued{};
       if (!store.pop(queued)) {
+        Serial.println("[NET] offline drain failed — queue reset");
         break;
       }
+      drainBudget--;
       if (!sender.send(queued)) {
         store.push(queued);
         break;
