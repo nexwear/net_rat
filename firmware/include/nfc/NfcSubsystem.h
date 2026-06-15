@@ -18,6 +18,7 @@ class NfcSubsystem {
   bool readUid14443(char out[24]);
   bool readUid15693(char out[24]);
   void emitTap(const char* uid);
+  uint32_t pollIntervalMs() const;
 
   pins::PinMap _pins;
   TapCallback _onTap;
@@ -29,9 +30,12 @@ class NfcSubsystem {
   uint32_t _lastPollMs = 0;
   uint32_t _lastTapMs = 0;
   uint32_t _lastIdleLogMs = 0;
+  uint32_t _quietUntilMs = 0;
   char _lastUid[24] = "";
 
-  static constexpr uint32_t POLL_INTERVAL_MS = 100;
+  static constexpr uint32_t POLL_INTERVAL_MS = 150;
+  static constexpr uint32_t ABSENT_CHECK_MS = 500;
+  static constexpr uint32_t POST_READ_QUIET_MS = 1000;
   static constexpr uint32_t TAP_GLITCH_MS = 300;
-  static constexpr uint8_t ABSENT_DEBOUNCE_POLLS = 3;
+  static constexpr uint8_t ABSENT_DEBOUNCE_POLLS = 2;
 };

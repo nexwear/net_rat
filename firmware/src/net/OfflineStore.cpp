@@ -1,6 +1,13 @@
 #include "net/OfflineStore.h"
 #include <Arduino.h>
+#include <Preferences.h>
 #include <cstring>
+
+namespace {
+constexpr const char* kCfgNs = "cfg";
+constexpr const char* kOfflineStoreVerKey = "offlineStoreVer";
+constexpr int kOfflineStoreVer = 2;
+}  // namespace
 
 bool OfflineStore::validateQueueFile(size_t fileSize) {
   if (fileSize == 0) {
@@ -64,6 +71,21 @@ bool OfflineStore::begin() {
 
   _headOffset = 0;
   _depth = fileSize / kRecordSize;
+
+  Preferences prefs;
+  if (prefs.begin(kCfgNs, false)) {
+    const int storeVer = prefs.getInt(kOfflineStoreVerKey, 1);
+    if (storeVer < kOfflineStoreVer && _depth > 0) {
+      Serial.printf("[FS] migrating offline queue — cleared %u stale events\n",
+                    static_cast<unsigned>(_depth));
+      resetQueue();
+    }
+    if (storeVer < kOfflineStoreVer) {
+      prefs.putInt(kOfflineStoreVerKey, kOfflineStoreVer);
+    }
+    prefs.end();
+  }
+
   _ready = true;
   Serial.printf("[FS] Offline queue ready (depth %u)\n", static_cast<unsigned>(_depth));
   return true;

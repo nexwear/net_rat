@@ -71,27 +71,24 @@ bool NfcSubsystem::begin() {
   _lastPollMs = millis();
   _cardPresent = false;
   _absentStreak = 0;
+  _quietUntilMs = 0;
   Serial.printf("[NFC] PN5180 ready (product 0x%02X%02X)\n", productVersion[0], productVersion[1]);
   return true;
 }
 
 bool NfcSubsystem::readUid14443(char out[24]) {
-  for (uint8_t attempt = 0; attempt < 3; attempt++) {
-    gIso14443->reset();
-    if (!gIso14443->setupRF()) {
-      tryRecoverReader(gIso14443, _failStreak, _healthy);
-      return false;
-    }
-    delay(10);
-    uint8_t uid[10] = {};
-    const uint8_t uidLen = gIso14443->readCardSerial(uid);
-    if (uidLen > 0 && !uidAllZero(uid, uidLen)) {
-      formatHexUid(uid, uidLen, out);
-      _healthy = true;
-      _failStreak = 0;
-      return true;
-    }
-    delay(5);
+  gIso14443->reset();
+  if (!gIso14443->setupRF()) {
+    tryRecoverReader(gIso14443, _failStreak, _healthy);
+    return false;
+  }
+  uint8_t uid[10] = {};
+  const uint8_t uidLen = gIso14443->readCardSerial(uid);
+  if (uidLen > 0 && !uidAllZero(uid, uidLen)) {
+    formatHexUid(uid, uidLen, out);
+    _healthy = true;
+    _failStreak = 0;
+    return true;
   }
   return false;
 }
@@ -102,7 +99,6 @@ bool NfcSubsystem::readUid15693(char out[24]) {
     tryRecoverReader(gIso14443, _failStreak, _healthy);
     return false;
   }
-  delay(10);
   uint8_t uid15693[8] = {};
   if (gIso15693->getInventory(uid15693) == ISO15693_EC_OK && !uidAllZero(uid15693, sizeof(uid15693))) {
     formatHexUid(uid15693, sizeof(uid15693), out);
@@ -141,29 +137,38 @@ void NfcSubsystem::emitTap(const char* uid) {
 
 void NfcSubsystem::pollRead() {
   const uint32_t now = millis();
-  if ((now - _lastPollMs) < POLL_INTERVAL_MS) {
+  if ((now - _lastPollMs) < pollIntervalMs()) {
     return;
   }
   _lastPollMs = now;
 
-  char uid[24] = "";
-  const bool present = readUid(uid);
+  if (_quietUntilMs != 0 && now < _quietUntilMs) {
+    return;
+  }
 
-  if (present) {
-    _absentStreak = 0;
-    if (!_cardPresent) {
-      _cardPresent = true;
-      emitTap(uid);
+  char uid[24] = "";
+
+  if (_cardPresent) {
+    const bool present = readUid(uid);
+    if (!present) {
+      if (++_absentStreak >= ABSENT_DEBOUNCE_POLLS) {
+        _cardPresent = false;
+        _absentStreak = 0;
+        _quietUntilMs = 0;
+        Serial.println("[NFC] card removed — ready for next tap");
+      }
+    } else {
+      _absentStreak = 0;
     }
     return;
   }
 
-  if (_cardPresent) {
-    if (++_absentStreak < ABSENT_DEBOUNCE_POLLS) {
-      return;
-    }
-    _cardPresent = false;
+  const bool present = readUid(uid);
+  if (present) {
     _absentStreak = 0;
+    _cardPresent = true;
+    _quietUntilMs = now + POST_READ_QUIET_MS;
+    emitTap(uid);
     return;
   }
 
@@ -172,4 +177,8 @@ void NfcSubsystem::pollRead() {
     _lastIdleLogMs = now;
     Serial.println("[NFC] listening — present card to reader");
   }
+}
+
+uint32_t NfcSubsystem::pollIntervalMs() const {
+  return _cardPresent ? ABSENT_CHECK_MS : POLL_INTERVAL_MS;
 }
