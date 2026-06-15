@@ -215,20 +215,39 @@ async function ingestScan(node, body) {
 
   let sessionId;
   if (kind === 'TAP_IN' && bundleId) {
-    sessionId = crypto.randomUUID();
-    await query(
-      `INSERT INTO sessions (id, bundle_id, card_uid, module_type, node_id, start_ts)
-       VALUES ($1, $2, $3, $4::module_type, $5, $6)
-       ON CONFLICT (bundle_id, module_type) DO UPDATE
-       SET id = EXCLUDED.id, card_uid = EXCLUDED.card_uid, node_id = EXCLUDED.node_id,
-           start_ts = EXCLUDED.start_ts, end_ts = NULL, close_reason = NULL`,
-      [sessionId, bundleId, cardUid, node.module_type, node.id, when]
+    // Toggle: if this card already has an open session on this node, close it
+    const openSame = await query(
+      `SELECT id FROM sessions WHERE node_id = $1 AND bundle_id = $2 AND end_ts IS NULL LIMIT 1`,
+      [node.id, bundleId]
     );
-    if (node.module_type === 'INPUT') {
+    if (openSame.rowCount > 0) {
+      sessionId = openSame.rows[0].id;
       await query(
-        "UPDATE bundles SET status = 'IN_PROGRESS' WHERE id = $1",
-        [bundleId]
+        `UPDATE sessions SET end_ts = $2, close_reason = 'CARD_TAP' WHERE id = $1`,
+        [sessionId, when]
       );
+    } else {
+      // Close any stale open sessions on this node from other bundles
+      await query(
+        `UPDATE sessions SET end_ts = $2, close_reason = 'TIMEOUT'
+         WHERE node_id = $1 AND end_ts IS NULL`,
+        [node.id, when]
+      );
+      sessionId = crypto.randomUUID();
+      await query(
+        `INSERT INTO sessions (id, bundle_id, card_uid, module_type, node_id, start_ts)
+         VALUES ($1, $2, $3, $4::module_type, $5, $6)
+         ON CONFLICT (bundle_id, module_type) DO UPDATE
+         SET id = EXCLUDED.id, card_uid = EXCLUDED.card_uid, node_id = EXCLUDED.node_id,
+             start_ts = EXCLUDED.start_ts, end_ts = NULL, close_reason = NULL`,
+        [sessionId, bundleId, cardUid, node.module_type, node.id, when]
+      );
+      if (node.module_type === 'INPUT') {
+        await query(
+          "UPDATE bundles SET status = 'IN_PROGRESS' WHERE id = $1",
+          [bundleId]
+        );
+      }
     }
   }
 

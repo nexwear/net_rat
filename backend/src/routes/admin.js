@@ -210,19 +210,22 @@ router.get('/dashboard/stats', async (_req, res) => {
 router.get('/dashboard', async (_req, res) => {
   try {
     const { rows } = await query(`
-      SELECT
-        l.id   AS line_id,   l.name AS line_name,
-        n.id   AS node_id,   n.module_type, n.status AS node_status,
-        n.last_seen_at, n.rssi, n.fw_version,
-        s.id   AS session_id, s.bundle_id, s.card_uid,
-        s.start_ts, s.count_pass, s.count_cycle,
-        b.declared_pieces, b.status AS bundle_status
-      FROM lines l
-      LEFT JOIN nodes n ON n.line_id = l.id
-      LEFT JOIN sessions s ON s.node_id = n.id AND s.end_ts IS NULL
-      LEFT JOIN bundles b ON b.id = s.bundle_id
-      ORDER BY l.id,
-        CASE n.module_type
+      SELECT * FROM (
+        SELECT DISTINCT ON (n.id)
+          l.id   AS line_id,   l.name AS line_name,
+          n.id   AS node_id,   n.module_type, n.status AS node_status,
+          n.last_seen_at, n.rssi, n.fw_version,
+          s.id   AS session_id, s.bundle_id, s.card_uid,
+          s.start_ts, s.count_pass, s.count_cycle,
+          b.declared_pieces, b.status AS bundle_status
+        FROM lines l
+        LEFT JOIN nodes n ON n.line_id = l.id
+        LEFT JOIN sessions s ON s.node_id = n.id AND s.end_ts IS NULL
+        LEFT JOIN bundles b ON b.id = s.bundle_id
+        ORDER BY n.id, s.start_ts DESC NULLS LAST
+      ) sub
+      ORDER BY line_id,
+        CASE module_type
           WHEN 'INPUT'    THEN 1 WHEN 'OUTPUT_1' THEN 2
           WHEN 'OUTPUT_2' THEN 3 WHEN 'ADMIN'    THEN 4 ELSE 5 END
     `);
