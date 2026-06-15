@@ -3,3 +3,5 @@
 **/.next/
 *.pem
 *.log
+firmware/.pio/
+backend/firmware/*.bin

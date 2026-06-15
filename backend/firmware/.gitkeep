@@ -1,0 +1,1 @@
+# Place OTA .bin files here, then register via POST /v1/admin/ota/releases

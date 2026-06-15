@@ -1,12 +1,51 @@
 const express = require('express');
+const { initDb } = require('./db');
+const deviceRoutes = require('./routes/devices');
+const ingestRoutes = require('./routes/ingest');
+const cardRoutes = require('./routes/cards');
+const bundleRoutes = require('./routes/bundles');
+const statusRoutes = require('./routes/status');
+const otaRoutes = require('./routes/ota');
+const { ensureFirmwareDir } = require('./services/ota');
+
 const app = express();
+const PORT = process.env.PORT || 4000;
 
 app.use(express.json());
 
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'backend' });
 });
 
-app.listen(4000, () => {
-  console.log('Backend running on port 4000');
+app.get('/healthz', (_req, res) => {
+  res.json({ status: 'ok' });
 });
+
+app.use('/v1/devices', deviceRoutes);
+app.use('/v1', cardRoutes);
+app.use('/v1', bundleRoutes);
+app.use('/v1', statusRoutes);
+app.use('/v1', otaRoutes);
+app.use('/v1', ingestRoutes);
+
+async function start() {
+  try {
+    await initDb();
+    ensureFirmwareDir();
+    console.log('Database ready');
+  } catch (err) {
+    console.error('Database init failed:', err.message);
+    if (process.env.REQUIRE_DB !== 'false') {
+      process.exit(1);
+    }
+  }
+
+  app.listen(PORT, () => {
+    console.log(`Backend running on port ${PORT}`);
+    if (process.env.AUTO_APPROVE_DEVICES === 'true') {
+      console.log('AUTO_APPROVE_DEVICES enabled — new claims activate immediately');
+    }
+  });
+}
+
+start();

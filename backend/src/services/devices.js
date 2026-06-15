@@ -1,0 +1,305 @@
+const crypto = require('crypto');
+const { query } = require('../db');
+
+function makeToken(prefix = 'tok') {
+  return `${prefix}_${crypto.randomBytes(24).toString('hex')}`;
+}
+
+function makeNodeId(chipId, moduleHint) {
+  const suffix = chipId.slice(-6).toUpperCase();
+  const mod = (moduleHint || 'INPUT').replace(/[^A-Z0-9_]/gi, '').slice(0, 12);
+  return `${mod}-${suffix}`;
+}
+
+async function findNodeByToken(token) {
+  if (!token) return null;
+  const { rows } = await query(
+    'SELECT * FROM nodes WHERE api_token = $1 LIMIT 1',
+    [token]
+  );
+  return rows[0] || null;
+}
+
+async function claimDevice(chipId, moduleHint) {
+  const existing = await query('SELECT * FROM nodes WHERE chip_id = $1', [chipId]);
+  let node;
+
+  if (existing.rowCount > 0) {
+    node = existing.rows[0];
+    const tempToken = makeToken('tmp');
+    await query(
+      `UPDATE nodes SET api_token = $1, status = 'PENDING', module_type = COALESCE($2::module_type, module_type)
+       WHERE id = $3`,
+      [tempToken, moduleHint || null, node.id]
+    );
+    node.api_token = tempToken;
+    node.status = 'PENDING';
+  } else {
+    const nodeId = makeNodeId(chipId, moduleHint);
+    const tempToken = makeToken('tmp');
+    const mod = moduleHint || 'INPUT';
+    const { rows } = await query(
+      `INSERT INTO nodes (id, chip_id, module_type, api_token, status)
+       VALUES ($1, $2, $3::module_type, $4, 'PENDING')
+       RETURNING *`,
+      [nodeId, chipId, mod, tempToken]
+    );
+    node = rows[0];
+  }
+
+  if (process.env.AUTO_APPROVE_DEVICES === 'true') {
+    node = await approveDevice(node.id, {
+      moduleType: moduleHint || node.module_type || 'INPUT',
+    });
+  }
+
+  return { nodeId: node.id, tempToken: node.api_token };
+}
+
+async function approveDevice(nodeId, { lineId, moduleType } = {}) {
+  const line =
+    lineId ||
+    process.env.DEFAULT_LINE_ID ||
+    (await query('SELECT id FROM lines ORDER BY id LIMIT 1')).rows[0]?.id;
+
+  const token = makeToken('tok');
+  const mod = moduleType || 'INPUT';
+
+  const { rows } = await query(
+    `UPDATE nodes
+     SET status = 'ACTIVE', api_token = $1, line_id = $2, module_type = $3::module_type
+     WHERE id = $4
+     RETURNING *`,
+    [token, line, mod, nodeId]
+  );
+
+  if (rows.length === 0) {
+    const err = new Error('Node not found');
+    err.status = 404;
+    throw err;
+  }
+  return rows[0];
+}
+
+async function getDeviceConfig(nodeId, token) {
+  const { rows } = await query(
+    'SELECT n.*, l.factory_id FROM nodes n LEFT JOIN lines l ON l.id = n.line_id WHERE n.id = $1 AND n.api_token = $2',
+    [nodeId, token]
+  );
+  const node = rows[0];
+  if (!node) {
+    const err = new Error('Not found');
+    err.status = 404;
+    throw err;
+  }
+
+  if (node.status === 'PENDING') {
+    return { status: 'PENDING' };
+  }
+
+  return {
+    status: 'ACTIVE',
+    nodeId: node.id,
+    lineId: String(node.line_id || ''),
+    factoryId: String(node.factory_id || process.env.DEFAULT_FACTORY_ID || '1'),
+    moduleType: node.module_type,
+    token: node.api_token,
+    otaHrs: 6,
+  };
+}
+
+async function resolveBundle(cardUid) {
+  const { rows } = await query(
+    'SELECT current_bundle_id FROM cards WHERE uid = $1',
+    [cardUid]
+  );
+  return rows[0]?.current_bundle_id || null;
+}
+
+async function checkSeq(nodeId, seq) {
+  const { rows } = await query('SELECT flags FROM nodes WHERE id = $1', [nodeId]);
+  const lastSeq = rows[0]?.flags?.lastSeq || 0;
+  if (typeof seq === 'number' && seq < lastSeq - 1000) {
+    const err = new Error('Sequence rollback rejected');
+    err.status = 409;
+    throw err;
+  }
+  if (typeof seq === 'number' && seq > lastSeq) {
+    await query(
+      `UPDATE nodes SET flags = COALESCE(flags, '{}'::jsonb) || jsonb_build_object('lastSeq', $2::int)
+       WHERE id = $1`,
+      [nodeId, seq]
+    );
+  }
+}
+
+async function isDuplicateEvent(eventId) {
+  const checks = await Promise.all([
+    query('SELECT 1 FROM scan_events WHERE event_id = $1', [eventId]),
+    query('SELECT 1 FROM unassigned_counts WHERE event_id = $1', [eventId]),
+  ]);
+  return checks.some((r) => r.rowCount > 0);
+}
+
+function parseTs(ts, tsValid) {
+  if (tsValid === false || tsValid === 'false') {
+    return new Date();
+  }
+  const d = new Date(Number(ts));
+  return Number.isNaN(d.getTime()) ? new Date() : d;
+}
+
+async function ingestScan(node, body) {
+  const { eventId, seq, kind, cardUid, ts, tsValid } = body;
+  await checkSeq(node.id, seq);
+
+  const dup = await query('SELECT 1 FROM scan_events WHERE event_id = $1', [eventId]);
+  if (dup.rowCount > 0) {
+    return { duplicate: true };
+  }
+
+  const bundleId = await resolveBundle(cardUid);
+  const when = parseTs(ts, tsValid);
+
+  await query(
+    `INSERT INTO scan_events (event_id, node_id, module_type, card_uid, bundle_id, kind, ts)
+     VALUES ($1, $2, $3::module_type, $4, $5, $6::scan_kind, $7)`,
+    [eventId, node.id, node.module_type, cardUid, bundleId, kind, when]
+  );
+
+  let sessionId;
+  if (kind === 'TAP_IN' && bundleId) {
+    sessionId = crypto.randomUUID();
+    await query(
+      `INSERT INTO sessions (id, bundle_id, card_uid, module_type, node_id, start_ts)
+       VALUES ($1, $2, $3, $4::module_type, $5, $6)
+       ON CONFLICT (bundle_id, module_type) DO UPDATE
+       SET id = EXCLUDED.id, card_uid = EXCLUDED.card_uid, node_id = EXCLUDED.node_id,
+           start_ts = EXCLUDED.start_ts, end_ts = NULL, close_reason = NULL`,
+      [sessionId, bundleId, cardUid, node.module_type, node.id, when]
+    );
+    if (node.module_type === 'INPUT') {
+      await query(
+        "UPDATE bundles SET status = 'IN_PROGRESS' WHERE id = $1",
+        [bundleId]
+      );
+    }
+  }
+
+  return { ok: true, bundleId, sessionId };
+}
+
+async function ingestSession(node, body) {
+  const { eventId, seq, sessionId, cardUid, type, counts, currentAmps, closeReason, ts, tsValid } =
+    body;
+  await checkSeq(node.id, seq);
+
+  const bundleId = await resolveBundle(cardUid);
+  const when = parseTs(ts, tsValid);
+  const pass = counts?.pass ?? 0;
+  const cycle = counts?.cycle ?? 0;
+
+  if (type === 'UPDATE') {
+    await query(
+      `INSERT INTO sessions (id, bundle_id, card_uid, module_type, node_id, start_ts, count_pass, count_cycle)
+       VALUES ($1, $2, $3, $4::module_type, $5, $6, $7, $8)
+       ON CONFLICT (bundle_id, module_type) DO UPDATE
+       SET count_pass = EXCLUDED.count_pass, count_cycle = EXCLUDED.count_cycle, node_id = EXCLUDED.node_id`,
+      [sessionId, bundleId, cardUid, node.module_type, node.id, when, pass, cycle]
+    );
+    await query(
+      `INSERT INTO count_samples (session_id, count_pass, count_cycle, current_amps, ts)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [sessionId, pass, cycle, currentAmps ?? null, when]
+    );
+  } else if (type === 'CLOSE') {
+    await query(
+      `INSERT INTO sessions (id, bundle_id, card_uid, module_type, node_id, start_ts, end_ts,
+                             count_pass, count_cycle, close_reason)
+       VALUES ($1, $2, $3, $4::module_type, $5, $6, $6, $7, $8, $9::close_reason)
+       ON CONFLICT (bundle_id, module_type) DO UPDATE
+       SET end_ts = EXCLUDED.end_ts, count_pass = EXCLUDED.count_pass,
+           count_cycle = EXCLUDED.count_cycle, close_reason = EXCLUDED.close_reason`,
+      [
+        sessionId,
+        bundleId,
+        cardUid,
+        node.module_type,
+        node.id,
+        when,
+        pass,
+        cycle,
+        closeReason || 'TIMEOUT',
+      ]
+    );
+
+    if (node.module_type === 'OUTPUT_2' && bundleId) {
+      await query("UPDATE bundles SET status = 'COMPLETED', card_uid = NULL WHERE id = $1", [
+        bundleId,
+      ]);
+      await query(
+        "UPDATE cards SET status = 'AVAILABLE', current_bundle_id = NULL WHERE uid = $1",
+        [cardUid]
+      );
+    }
+  }
+
+  return { ok: true };
+}
+
+async function ingestUnassigned(node, body) {
+  const { eventId, seq, cardUid, counts, ts, tsValid } = body;
+  await checkSeq(node.id, seq);
+
+  const dup = await query('SELECT 1 FROM unassigned_counts WHERE event_id = $1', [eventId]);
+  if (dup.rowCount > 0) {
+    return { duplicate: true };
+  }
+
+  const when = parseTs(ts, tsValid);
+  await query(
+    `INSERT INTO unassigned_counts (event_id, node_id, module_type, card_uid, count_pass, count_cycle, ts)
+     VALUES ($1, $2, $3::module_type, $4, $5, $6, $7)`,
+    [
+      eventId,
+      node.id,
+      node.module_type,
+      cardUid || null,
+      counts?.pass ?? 0,
+      counts?.cycle ?? 0,
+      when,
+    ]
+  );
+  return { ok: true };
+}
+
+async function ingestHeartbeat(node, body) {
+  const { rssi, uptime, fwVersion, queueDepth, flags } = body;
+
+  await query(
+    `UPDATE nodes SET last_seen_at = NOW(), rssi = $2, fw_version = $3,
+     flags = COALESCE(flags, '{}'::jsonb) || COALESCE($4::jsonb, '{}'::jsonb)
+     WHERE id = $1`,
+    [node.id, rssi, fwVersion, flags ? JSON.stringify(flags) : null]
+  );
+
+  await query(
+    `INSERT INTO heartbeats (node_id, rssi, uptime, fw_version, queue_depth, flags)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [node.id, rssi, uptime, fwVersion, queueDepth, flags ? JSON.stringify(flags) : null]
+  );
+
+  return { ok: true, serverTimeMs: Date.now() };
+}
+
+module.exports = {
+  findNodeByToken,
+  claimDevice,
+  approveDevice,
+  getDeviceConfig,
+  ingestScan,
+  ingestSession,
+  ingestUnassigned,
+  ingestHeartbeat,
+  resolveBundle,
+};

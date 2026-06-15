@@ -13,10 +13,15 @@ services:
 
   backend:
     build: ./backend
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./backend/firmware:/app/firmware
     env_file: .env
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - MQTT_HOST=mosquitto
+      - AUTO_APPROVE_DEVICES=true
     depends_on:
       - postgres
       - mosquitto
