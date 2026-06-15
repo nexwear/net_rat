@@ -23,9 +23,13 @@ class NfcSubsystem {
   }
   /** After admin scan completes — allow the next card without a full removal cycle. */
   void readyForNextAssign();
+  /** Call after server processed a scan — waits for card lift before next read. */
+  void onAssignFeedback();
   bool healthy() const { return _healthy; }
   /** True when admin reader is armed and waiting for a card tap. */
-  bool assignListening() const { return _assignMode && _assignArmed && _initialized; }
+  bool assignListening() const {
+    return _assignMode && _assignArmed && !_cardPresent && _initialized;
+  }
 
  private:
   bool readUid(char out[24]);
@@ -60,11 +64,10 @@ class NfcSubsystem {
   static constexpr uint32_t ABSENT_CHECK_MS = 300;
   static constexpr uint32_t POST_READ_QUIET_MS = 1000;
   static constexpr uint32_t TAP_GLITCH_MS = 300;
-  static constexpr uint32_t ASSIGN_SAME_UID_MS = 800;
-  static constexpr uint32_t ASSIGN_REARM_MS = 1200;
-  static constexpr uint32_t ASSIGN_RF_QUIET_MS = 450;
-  static constexpr uint32_t ASSIGN_STUCK_MS = 6000;
-  static constexpr uint32_t PERIODIC_RECOVER_MS = 30000;
+  static constexpr uint32_t ASSIGN_SAME_UID_MS = 1500;
+  static constexpr uint32_t ASSIGN_RF_QUIET_MS = 300;
+  static constexpr uint32_t ASSIGN_STUCK_MS = 15000;
+  static constexpr uint32_t PERIODIC_RECOVER_MS = 120000;
   static constexpr uint32_t BUSY_STUCK_MS = 80;
   static constexpr uint8_t ABSENT_DEBOUNCE_POLLS = 2;
   static constexpr uint8_t ASSIGN_ABSENT_DEBOUNCE_POLLS = 2;

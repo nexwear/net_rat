@@ -9,7 +9,6 @@
 #include "nfc/NfcSubsystem.h"
 #include "session/SessionManager.h"
 #include "core/RuntimeFlags.h"
-#include <esp_task_wdt.h>
 
 namespace {
 struct SensingContext {
@@ -60,17 +59,8 @@ void sensingLoop(void* param) {
   uint32_t adminHeartbeatMs = 0;
   bool adminHeartbeatOn = false;
 
-  esp_err_t wdtErr = esp_task_wdt_add(nullptr);
-  const bool wdtActive = (wdtErr == ESP_OK || wdtErr == ESP_ERR_INVALID_STATE);
-  if (wdtErr == ESP_OK) {
-    Serial.println("[SENS] task watchdog enabled (10s)");
-  }
-
   TickType_t lastWake = xTaskGetTickCount();
   for (;;) {
-    if (wdtActive) {
-      esp_task_wdt_reset();
-    }
     for (auto* d : drivers) {
       d->poll();
     }
@@ -86,7 +76,7 @@ void sensingLoop(void* param) {
         sessions.setPpp(cmd.ppp);
         sessions.setDeclaredPieces(cmd.declaredPieces);
       } else if (cmd.type == CmdType::ADMIN_SCAN_FEEDBACK) {
-        nfc.readyForNextAssign();
+        nfc.onAssignFeedback();
         if (cmd.cardNumber > 0) {
           buzzer.play(cmd.newlyRegistered ? BuzzPattern::ADMIN_NEW : BuzzPattern::ADMIN_EXISTS);
           adminLedUntilMs = millis() + (cmd.newlyRegistered ? 450U : 250U);

@@ -186,16 +186,27 @@ bool NfcSubsystem::readUid(char out[24]) {
 }
 
 void NfcSubsystem::readyForNextAssign() {
-  _cardPresent = false;
   _absentStreak = 0;
   _assignArmed = true;
   _disarmedSinceMs = 0;
   _rfQuietUntilMs = 0;
+  _cardPresent = false;
   _lastUid[0] = '\0';
   if (gIso14443) {
     gIso14443->reset();
   }
   Serial.println("[NFC] ready for next card");
+}
+
+void NfcSubsystem::onAssignFeedback() {
+  _rfQuietUntilMs = millis() + ASSIGN_RF_QUIET_MS;
+  _disarmedSinceMs = 0;
+  if (_cardPresent) {
+    Serial.println("[NFC] scan done — lift card for next");
+    return;
+  }
+  _assignArmed = true;
+  _lastUid[0] = '\0';
 }
 
 void NfcSubsystem::tickAssignWatchdog(uint32_t now) {
@@ -206,15 +217,14 @@ void NfcSubsystem::tickAssignWatchdog(uint32_t now) {
   if (!_assignArmed && _disarmedSinceMs != 0 && (now - _disarmedSinceMs) >= ASSIGN_STUCK_MS) {
     Serial.println("[NFC] assign slot stuck — force re-arm");
     readyForNextAssign();
-    recoverReader("assign slot stuck");
     return;
   }
 
-  if (_assignArmed && _lastTapMs != 0 && (now - _lastTapMs) >= PERIODIC_RECOVER_MS &&
+  if (_assignArmed && !_cardPresent && _lastTapMs != 0 &&
+      (now - _lastTapMs) >= PERIODIC_RECOVER_MS &&
       (now - _lastRecoverMs) >= PERIODIC_RECOVER_MS) {
     recoverReader("periodic refresh");
     readyForNextAssign();
-    return;
   }
 }
 
@@ -225,11 +235,6 @@ bool NfcSubsystem::emitTap(const char* uid) {
   const uint32_t now = millis();
   const uint32_t debounceMs = _assignMode ? ASSIGN_SAME_UID_MS : TAP_GLITCH_MS;
   if (strcmp(uid, _lastUid) == 0 && (now - _lastTapMs) < debounceMs) {
-    if (_assignMode) {
-      _rfQuietUntilMs = now + ASSIGN_RF_QUIET_MS;
-      _assignArmed = false;
-      _disarmedSinceMs = now;
-    }
     return false;
   }
   strncpy(_lastUid, uid, sizeof(_lastUid) - 1);
@@ -237,10 +242,6 @@ bool NfcSubsystem::emitTap(const char* uid) {
   Serial.printf("[NFC] tap uid=%s\n", uid);
   _onTap(uid);
   if (_assignMode) {
-    _cardPresent = false;
-    _absentStreak = 0;
-    _assignArmed = false;
-    _disarmedSinceMs = now;
     _rfQuietUntilMs = now + ASSIGN_RF_QUIET_MS;
     _lastPollMs = now;
   }
@@ -267,33 +268,42 @@ void NfcSubsystem::pollRead() {
   if (_assignMode) {
     tickAssignWatchdog(now);
 
-    if (!_assignArmed) {
-      if ((now - _lastTapMs) >= ASSIGN_REARM_MS) {
-        readyForNextAssign();
-      } else {
-        return;
-      }
-    }
-
     if (_rfQuietUntilMs != 0 && now < _rfQuietUntilMs) {
       return;
     }
 
+    if (_cardPresent) {
+      const bool present = readUid(uid);
+      if (!present) {
+        if (++_absentStreak >= ASSIGN_ABSENT_DEBOUNCE_POLLS) {
+          _cardPresent = false;
+          _absentStreak = 0;
+          _assignArmed = true;
+          _lastUid[0] = '\0';
+          Serial.println("[NFC] card removed — ready for next tap");
+        }
+      } else {
+        _absentStreak = 0;
+      }
+      return;
+    }
+
+    if (!_assignArmed) {
+      _assignArmed = true;
+    }
+
     const bool present = readUid(uid);
     if (present && uid[0] != '\0') {
-      emitTap(uid);
-      _absentStreak = 0;
+      if (emitTap(uid)) {
+        _cardPresent = true;
+        _absentStreak = 0;
+      }
       return;
     }
 
     if (!_healthy && _failStreak >= 3) {
       recoverReader("read failures");
       readyForNextAssign();
-    }
-
-    if (++_absentStreak >= ASSIGN_ABSENT_DEBOUNCE_POLLS) {
-      _absentStreak = 0;
-      _cardPresent = false;
     }
 
     if ((now - _lastIdleLogMs) > 30000) {
@@ -341,7 +351,7 @@ void NfcSubsystem::pollRead() {
 
 uint32_t NfcSubsystem::pollIntervalMs() const {
   if (_assignMode) {
-    return POLL_INTERVAL_MS;
+    return _cardPresent ? ABSENT_CHECK_MS : POLL_INTERVAL_MS;
   }
   return _cardPresent ? ABSENT_CHECK_MS : POLL_INTERVAL_MS;
 }
