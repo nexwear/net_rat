@@ -16,15 +16,25 @@ bool gSubmitted = false;
 
 String portalPage() {
   return R"(<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1">
-<title>Grewbie Setup</title></head><body><h1>Garment Node Setup</h1>
+<title>Grewbie Setup</title>
+<style>body{font-family:sans-serif;max-width:420px;margin:24px auto;padding:0 12px}
+.note{background:#fff8e6;border:1px solid #e6c200;border-radius:8px;padding:10px 12px;margin:12px 0;font-size:14px}
+select,input,button{font-size:16px;width:100%;margin:6px 0 14px;padding:8px;box-sizing:border-box}
+label{font-weight:600;font-size:13px}</style></head><body>
+<h1>Garment Node Setup</h1>
+<div class="note"><strong>Admin room NFC reader?</strong> Set Module to <strong>ADMIN</strong> below (not INPUT).</div>
 <form method=POST action=/config>
-<label>WiFi SSID <input name=ssid required></label><br>
-<label>Password <input name=pass type=password></label><br>
-<label>Server URL <input name=server value="http://15.206.16.137/api"></label><br>
-<label>Module <select name=module>
-<option>INPUT</option><option>OUTPUT_1</option><option>OUTPUT_2</option><option>ADMIN</option>
-</select></label><br>
-<button type=submit>Save</button></form></body></html>)";
+<label>WiFi SSID</label><input name=ssid required>
+<label>Password</label><input name=pass type=password>
+<label>Server URL</label><input name=server value="http://15.206.16.137/api">
+<label>Module</label><select name=module required>
+<option value="">— select module —</option>
+<option value="INPUT">INPUT (production line)</option>
+<option value="OUTPUT_1">OUTPUT_1</option>
+<option value="OUTPUT_2">OUTPUT_2</option>
+<option value="ADMIN">ADMIN (admin room card reader)</option>
+</select>
+<button type=submit>Save &amp; connect</button></form></body></html>)";
 }
 
 bool testWifi(const String& ssid, const String& pass) {
@@ -50,9 +60,10 @@ bool testWifi(const String& ssid, const String& pass) {
 }  // namespace
 
 String Provisioning::apName(ModuleType hint) {
+  (void)hint;
   const uint64_t mac = ESP.getEfuseMac();
   char buf[48];
-  snprintf(buf, sizeof(buf), "Grewbie-%s-%04X", moduleTypeToString(hint), static_cast<unsigned>(mac & 0xFFFF));
+  snprintf(buf, sizeof(buf), "Grewbie-Setup-%04X", static_cast<unsigned>(mac & 0xFFFF));
   return String(buf);
 }
 
@@ -85,7 +96,22 @@ bool Provisioning::startSoftAp(ModuleType hint) {
     cred.pass = server.arg("pass");
     gCfg->wifi.push_back(cred);
     gCfg->serverUrl = server.arg("server");
-    gCfg->moduleType = server.arg("module");
+    const String module = server.arg("module");
+    const char* valid[] = {"INPUT", "OUTPUT_1", "OUTPUT_2", "ADMIN"};
+    bool okMod = false;
+    for (const char* m : valid) {
+      if (module == m) {
+        okMod = true;
+        break;
+      }
+    }
+    if (!okMod) {
+      server.send(400, "text/plain", "module required — pick INPUT, OUTPUT_1, OUTPUT_2, or ADMIN");
+      return;
+    }
+    gCfg->moduleType = module;
+    Serial.printf("[PROV] portal config module=%s ssid=%s server=%s\n", module.c_str(),
+                  cred.ssid.c_str(), gCfg->serverUrl.c_str());
     if (!testWifi(cred.ssid, cred.pass)) {
       server.send(400, "text/plain", "wifi failed");
       return;

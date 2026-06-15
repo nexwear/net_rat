@@ -22,6 +22,13 @@ async function findNodeByToken(token) {
 }
 
 async function claimDevice(chipId, moduleHint, label) {
+  const raw = (moduleHint || '').trim().toUpperCase();
+  const valid = ['INPUT', 'OUTPUT_1', 'OUTPUT_2', 'ADMIN'];
+  const mod = valid.includes(raw) ? raw : null;
+  if (moduleHint && !mod) {
+    console.warn(`claim: invalid moduleHint "${moduleHint}", ignoring`);
+  }
+
   const existing = await query('SELECT * FROM nodes WHERE chip_id = $1', [chipId]);
   let node;
   const lbl = label && label.trim() ? label.trim() : null;
@@ -34,28 +41,31 @@ async function claimDevice(chipId, moduleHint, label) {
          module_type = COALESCE($2::module_type, module_type),
          label = COALESCE($4, label)
        WHERE id = $3`,
-      [tempToken, moduleHint || null, node.id, lbl]
+      [tempToken, mod, node.id, lbl]
     );
+    if (mod) node.module_type = mod;
     node.api_token = tempToken;
     node.status = 'PENDING';
   } else {
-    const nodeId = makeNodeId(chipId, moduleHint);
+    const nodeId = makeNodeId(chipId, mod || 'INPUT');
     const tempToken = makeToken('tmp');
-    const mod = moduleHint || 'INPUT';
+    const insertMod = mod || 'INPUT';
     const { rows } = await query(
       `INSERT INTO nodes (id, chip_id, module_type, api_token, status, label)
        VALUES ($1, $2, $3::module_type, $4, 'PENDING', $5)
        RETURNING *`,
-      [nodeId, chipId, mod, tempToken, lbl]
+      [nodeId, chipId, insertMod, tempToken, lbl]
     );
     node = rows[0];
   }
 
   if (process.env.AUTO_APPROVE_DEVICES === 'true') {
     node = await approveDevice(node.id, {
-      moduleType: moduleHint || node.module_type || 'INPUT',
+      moduleType: mod || node.module_type || 'INPUT',
     });
   }
+
+  console.log(`claim: chip=${chipId} node=${node.id} module=${node.module_type} hint=${mod || '(none)'}`);
 
   return { nodeId: node.id, tempToken: node.api_token };
 }
