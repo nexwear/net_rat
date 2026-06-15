@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { API_BASE, adminHeaders, apiFetch } from './AdminPage.jsx'
+import { API_BASE, adminHeaders } from './AdminPage.jsx'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -33,6 +33,10 @@ function rssiIcon(rssi) {
   return '▂'
 }
 
+const n = (v) => Number(v) || 0
+const pct = (a, b) => n(b) > 0 ? Math.round((n(a) / n(b)) * 100) : null
+const fmt = (v) => n(v).toLocaleString()
+
 const HEALTH_COLOR = {
   active:  'var(--success)',
   stale:   'var(--warning)',
@@ -52,12 +56,261 @@ const MOD_COLOR = {
   ADMIN:    'var(--factory)',
 }
 
+// ─── Stats sub-components ────────────────────────────────────────────────────
+
+function KpiCard({ title, value, sub, color, accent }) {
+  return (
+    <div style={{
+      background: 'var(--surface)',
+      border: '1px solid var(--border)',
+      borderRadius: 10,
+      padding: '16px 20px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 4,
+      borderTop: accent ? `3px solid ${accent}` : undefined,
+      flex: '1 1 160px',
+    }}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+        {title}
+      </span>
+      <span style={{ fontSize: 30, fontWeight: 800, color: color || 'var(--text)', letterSpacing: '-0.03em', lineHeight: 1.15 }}>
+        {value ?? '—'}
+      </span>
+      {sub && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{sub}</span>}
+    </div>
+  )
+}
+
+function YieldBar({ val }) {
+  if (val == null) return <span style={{ color: 'var(--text-3)' }}>—</span>
+  const color = val >= 95 ? 'var(--success)' : val >= 80 ? 'var(--warning)' : 'var(--danger)'
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 100 }}>
+      <div style={{ flex: 1, background: 'var(--surface-2, #1e1e22)', borderRadius: 3, height: 5, overflow: 'hidden' }}>
+        <div style={{ width: `${Math.min(val, 100)}%`, height: '100%', background: color, borderRadius: 3 }} />
+      </div>
+      <span style={{ color, fontWeight: 700, fontSize: 12, minWidth: 38, textAlign: 'right' }}>{val}%</span>
+    </div>
+  )
+}
+
+function SummaryPanel({ title, children }) {
+  return (
+    <div style={{
+      background: 'var(--surface)',
+      border: '1px solid var(--border)',
+      borderRadius: 10,
+      padding: '16px 20px',
+      flex: '1 1 260px',
+      minWidth: 220,
+    }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 12 }}>
+        {title}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function StatRow({ label, value, valueColor, dot }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border-dim)' }}>
+      {dot && <span style={{ color: dot, fontSize: 9, lineHeight: 1 }}>●</span>}
+      <span style={{ flex: 1, color: 'var(--text-2)', fontSize: 13 }}>{label}</span>
+      <span style={{ fontWeight: 700, fontSize: 14, color: valueColor || 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+        {value}
+      </span>
+    </div>
+  )
+}
+
+// ─── Analytics section ────────────────────────────────────────────────────────
+
+function StatsSection({ stats }) {
+  const b  = stats.bundles  || {}
+  const s  = stats.sessions || {}
+  const nd = stats.nodes    || {}
+  const al = stats.alerts   || {}
+
+  const inputToday  = n(s.input_today)
+  const outputToday = n(s.output_today)
+  const yieldPct    = pct(outputToday, inputToday)
+
+  return (
+    <div style={{ marginBottom: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+      {/* KPI row */}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <KpiCard
+          title="Active Bundles"
+          value={fmt(b.in_progress)}
+          sub={`${fmt(b.issued)} waiting to start`}
+          accent="var(--warning)"
+          color="var(--warning)"
+        />
+        <KpiCard
+          title="Completed Today"
+          value={fmt(b.completed_today)}
+          sub={`${fmt(b.completed)} all-time`}
+          accent="var(--success)"
+          color="var(--success)"
+        />
+        <KpiCard
+          title="Input Pieces Today"
+          value={fmt(inputToday)}
+          sub="pieces entering production"
+          accent="var(--brand)"
+        />
+        <KpiCard
+          title="Today's Yield"
+          value={yieldPct != null ? `${yieldPct}%` : '—'}
+          sub={`${fmt(outputToday)} output / ${fmt(inputToday)} input`}
+          accent={yieldPct != null ? (yieldPct >= 95 ? 'var(--success)' : yieldPct >= 80 ? 'var(--warning)' : 'var(--danger)') : 'var(--border)'}
+          color={yieldPct != null ? (yieldPct >= 95 ? 'var(--success)' : yieldPct >= 80 ? 'var(--warning)' : 'var(--danger)') : 'var(--text-3)'}
+        />
+      </div>
+
+      {/* Status panels row */}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+
+        <SummaryPanel title="Bundle Status">
+          <StatRow label="In Progress" value={fmt(b.in_progress)} dot="var(--warning)" />
+          <StatRow label="Issued (not started)" value={fmt(b.issued)} dot="var(--text-3)" />
+          <StatRow label="Completed" value={fmt(b.completed)} dot="var(--success)" />
+          <StatRow label="Lost" value={fmt(b.lost)} dot="var(--danger)" valueColor={n(b.lost) > 0 ? 'var(--danger)' : undefined} />
+        </SummaryPanel>
+
+        <SummaryPanel title="Node Health">
+          <StatRow label="Online (<30s)" value={fmt(nd.active)} dot="var(--success)" />
+          <StatRow label="Stale (30s–2m)" value={fmt(nd.stale)} dot="var(--warning)" valueColor={n(nd.stale) > 0 ? 'var(--warning)' : undefined} />
+          <StatRow label="Offline (>2m)" value={fmt(nd.offline)} dot="var(--danger)" valueColor={n(nd.offline) > 0 ? 'var(--danger)' : undefined} />
+          <StatRow label="Pending Approval" value={fmt(nd.pending)} dot="var(--brand)" />
+        </SummaryPanel>
+
+        <SummaryPanel title="Alerts">
+          <StatRow label="Open Alerts" value={fmt(al.open)} valueColor={n(al.open) > 0 ? 'var(--danger)' : undefined} />
+          <StatRow label="High Severity" value={fmt(al.high_severity)} valueColor={n(al.high_severity) > 0 ? 'var(--danger)' : undefined} />
+          <StatRow label="Unacknowledged" value={fmt(al.unacknowledged)} valueColor={n(al.unacknowledged) > 0 ? 'var(--warning)' : undefined} />
+        </SummaryPanel>
+      </div>
+
+      {/* Line Performance */}
+      {stats.lines?.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>
+            Line Performance
+          </div>
+          <div className="table-wrap">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Line</th>
+                  <th>Active Bundles</th>
+                  <th>Completed</th>
+                  <th>Nodes Online</th>
+                  <th>Input Pieces</th>
+                  <th>Output Pieces</th>
+                  <th>Yield</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.lines.map((l) => {
+                  const yld = pct(l.output_pieces, l.input_pieces)
+                  return (
+                    <tr key={l.id}>
+                      <td style={{ fontWeight: 600, color: 'var(--text)' }}>{l.name}</td>
+                      <td>
+                        {n(l.active_bundles) > 0
+                          ? <span className="badge badge-yellow">{fmt(l.active_bundles)}</span>
+                          : <span style={{ color: 'var(--text-3)' }}>0</span>
+                        }
+                      </td>
+                      <td>{fmt(l.completed_bundles)}</td>
+                      <td>
+                        <span style={{ fontWeight: 600, color: n(l.active_nodes) > 0 ? 'var(--success)' : 'var(--text-3)' }}>
+                          {fmt(l.active_nodes)}
+                        </span>
+                        <span style={{ color: 'var(--text-3)', fontSize: 11 }}> / {fmt(l.total_nodes)}</span>
+                      </td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(l.input_pieces)}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(l.output_pieces)}</td>
+                      <td style={{ minWidth: 140 }}><YieldBar val={yld} /></td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Contractor Output */}
+      {stats.contractors?.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>
+            Contractor Output
+          </div>
+          <div className="table-wrap">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Contractor</th>
+                  <th>Assigned</th>
+                  <th>Active</th>
+                  <th>Completed</th>
+                  <th>Declared Pcs</th>
+                  <th>Input Pcs</th>
+                  <th>Output Pcs</th>
+                  <th>Yield</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.contractors.map((c) => {
+                  const yld = pct(c.output_pieces, c.input_pieces)
+                  return (
+                    <tr key={c.id}>
+                      <td>
+                        <span style={{ fontWeight: 600, color: 'var(--text)' }}>{c.contractor_name}</span>
+                        {c.code && (
+                          <span style={{ color: 'var(--text-3)', fontSize: 11, marginLeft: 6 }}>{c.code}</span>
+                        )}
+                      </td>
+                      <td>{fmt(c.bundles_assigned)}</td>
+                      <td>
+                        {n(c.bundles_active) > 0
+                          ? <span className="badge badge-yellow">{fmt(c.bundles_active)}</span>
+                          : <span style={{ color: 'var(--text-3)' }}>0</span>
+                        }
+                      </td>
+                      <td>
+                        {n(c.bundles_completed) > 0
+                          ? <span className="badge badge-green">{fmt(c.bundles_completed)}</span>
+                          : <span style={{ color: 'var(--text-3)' }}>0</span>
+                        }
+                      </td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(c.declared_pieces)}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(c.input_pieces)}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(c.output_pieces)}</td>
+                      <td style={{ minWidth: 140 }}><YieldBar val={yld} /></td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Node tile ────────────────────────────────────────────────────────────────
 
 function NodeTile({ node }) {
   const health = nodeHealth(node)
   const dot = HEALTH_COLOR[health]
-  const pct = node.session?.declaredPieces > 0
+  const pctVal = node.session?.declaredPieces > 0
     ? Math.min(100, Math.round((node.session.countPass / node.session.declaredPieces) * 100))
     : 0
 
@@ -75,7 +328,6 @@ function NodeTile({ node }) {
       flexDirection: 'column',
       gap: 8,
     }}>
-      {/* header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{
           background: MOD_BG[node.moduleType] || 'var(--surface-1)',
@@ -95,12 +347,10 @@ function NodeTile({ node }) {
         </span>
       </div>
 
-      {/* node id */}
       <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-3)' }}>
         {node.nodeId}
       </div>
 
-      {/* session */}
       {node.session ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ fontSize: 11, color: 'var(--text-3)', display: 'flex', gap: 5, alignItems: 'center' }}>
@@ -122,8 +372,8 @@ function NodeTile({ node }) {
           {node.session.declaredPieces > 0 && (
             <div style={{ background: 'var(--surface-2)', borderRadius: 3, height: 4, overflow: 'hidden' }}>
               <div style={{
-                width: `${pct}%`, height: '100%',
-                background: pct >= 100 ? 'var(--success)' : 'var(--brand)',
+                width: `${pctVal}%`, height: '100%',
+                background: pctVal >= 100 ? 'var(--success)' : 'var(--brand)',
                 borderRadius: 3,
                 transition: 'width 0.4s',
               }} />
@@ -142,7 +392,6 @@ function NodeTile({ node }) {
         </div>
       )}
 
-      {/* footer */}
       <div style={{
         borderTop: '1px solid var(--border-dim)',
         paddingTop: 7,
@@ -161,9 +410,9 @@ function NodeTile({ node }) {
 // ─── Line card ────────────────────────────────────────────────────────────────
 
 function LineCard({ line }) {
-  const activeNodes = line.nodes.filter((n) => nodeHealth(n) === 'active').length
-  const totalPieces = line.nodes.reduce((sum, n) => sum + (n.session?.countPass ?? 0), 0)
-  const sessionsOpen = line.nodes.filter((n) => n.session).length
+  const activeNodes = line.nodes.filter((nd) => nodeHealth(nd) === 'active').length
+  const totalPieces = line.nodes.reduce((sum, nd) => sum + (nd.session?.countPass ?? 0), 0)
+  const sessionsOpen = line.nodes.filter((nd) => nd.session).length
 
   return (
     <div style={{
@@ -188,14 +437,10 @@ function LineCard({ line }) {
           {activeNodes}/{line.nodes.length} active
         </span>
         {sessionsOpen > 0 && (
-          <span className="badge badge-yellow">
-            {sessionsOpen} open
-          </span>
+          <span className="badge badge-yellow">{sessionsOpen} open</span>
         )}
         {totalPieces > 0 && (
-          <span className="badge badge-green">
-            {totalPieces} pcs
-          </span>
+          <span className="badge badge-green">{totalPieces} pcs</span>
         )}
       </div>
 
@@ -205,8 +450,8 @@ function LineCard({ line }) {
         </p>
       ) : (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-          {line.nodes.map((n) => (
-            <NodeTile key={n.nodeId} node={n} />
+          {line.nodes.map((nd) => (
+            <NodeTile key={nd.nodeId} node={nd} />
           ))}
         </div>
       )}
@@ -214,7 +459,7 @@ function LineCard({ line }) {
   )
 }
 
-// ─── WS status chip ──────────────────────────────────────────────────────────
+// ─── WS chip ──────────────────────────────────────────────────────────────────
 
 function WsChip({ state }) {
   const map = {
@@ -230,13 +475,14 @@ function WsChip({ state }) {
 // ─── Main component ──────────────────────────────────────────────────────────
 
 export default function DashboardTab() {
-  const [lines, setLines] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [wsState, setWsState] = useState('connecting')
+  const [lines,      setLines]      = useState([])
+  const [stats,      setStats]      = useState(null)
+  const [statsError, setStatsError] = useState('')
+  const [loading,    setLoading]    = useState(true)
+  const [wsState,    setWsState]    = useState('connecting')
   const [lastUpdate, setLastUpdate] = useState(null)
-  const wsRef = useRef(null)
-  const reconnectTimer = useRef(null)
+  const wsRef            = useRef(null)
+  const reconnectTimer   = useRef(null)
 
   const fetchSnapshot = useCallback(async () => {
     try {
@@ -244,47 +490,44 @@ export default function DashboardTab() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed')
       setLines(data)
-      setError('')
       setLastUpdate(new Date())
     } catch (e) {
-      setError(e.message)
+      console.error('dashboard snapshot error', e)
     } finally {
       setLoading(false)
     }
   }, [])
 
-  // Incremental node update helper
+  const fetchStats = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/v1/admin/dashboard/stats`, { headers: adminHeaders() })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed')
+      setStats(data)
+      setStatsError('')
+    } catch (e) {
+      setStatsError(e.message)
+    }
+  }, [])
+
   const patchNode = useCallback((nodeId, updater) => {
     setLines((prev) => prev.map((line) => ({
       ...line,
-      nodes: line.nodes.map((n) => n.nodeId === nodeId ? updater(n) : n),
+      nodes: line.nodes.map((nd) => nd.nodeId === nodeId ? updater(nd) : nd),
     })))
     setLastUpdate(new Date())
   }, [])
 
-  // WebSocket connection with auto-reconnect
   const connectWs = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
-
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const ws = new WebSocket(`${proto}://${window.location.host}/api/ws`)
     wsRef.current = ws
     setWsState('connecting')
 
-    ws.onopen = () => {
-      setWsState('open')
-      clearTimeout(reconnectTimer.current)
-    }
-
-    ws.onclose = () => {
-      setWsState('closed')
-      reconnectTimer.current = setTimeout(connectWs, 4_000)
-    }
-
-    ws.onerror = () => {
-      setWsState('error')
-      ws.close()
-    }
+    ws.onopen  = () => { setWsState('open'); clearTimeout(reconnectTimer.current) }
+    ws.onclose = () => { setWsState('closed'); reconnectTimer.current = setTimeout(connectWs, 4_000) }
+    ws.onerror = () => { setWsState('error'); ws.close() }
 
     ws.onmessage = (event) => {
       try {
@@ -296,69 +539,92 @@ export default function DashboardTab() {
 
   function handleMessage(type, payload) {
     if (type === 'node_heartbeat') {
-      patchNode(payload.nodeId, (n) => ({
-        ...n,
+      patchNode(payload.nodeId, (nd) => ({
+        ...nd,
         lastSeenAt: payload.lastSeenAt,
         rssi: payload.rssi,
-        fwVersion: payload.fwVersion || n.fwVersion,
+        fwVersion: payload.fwVersion || nd.fwVersion,
       }))
     } else if (type === 'session_update') {
       if (payload.type === 'UPDATE') {
-        patchNode(payload.nodeId, (n) => ({
-          ...n,
-          session: n.session ? {
-            ...n.session,
+        patchNode(payload.nodeId, (nd) => ({
+          ...nd,
+          session: nd.session ? {
+            ...nd.session,
             countPass: payload.countPass,
             countCycle: payload.countCycle,
-          } : n.session,
+          } : nd.session,
         }))
       } else if (payload.type === 'CLOSE') {
-        patchNode(payload.nodeId, (n) => ({ ...n, session: null }))
+        patchNode(payload.nodeId, (nd) => ({ ...nd, session: null }))
+        fetchStats()
       }
     } else if (type === 'scan_event') {
-      // TAP events change session structure — re-fetch the snapshot
       fetchSnapshot()
-    } else if (type === 'alert_raised') {
-      // Could flash something — for now just refresh
+      fetchStats()
     }
   }
 
   useEffect(() => {
     fetchSnapshot()
+    fetchStats()
     connectWs()
 
-    // Periodic full-sync every 30 s as fallback
-    const syncInterval = setInterval(fetchSnapshot, 30_000)
+    const syncInterval  = setInterval(fetchSnapshot, 30_000)
+    const statsInterval = setInterval(fetchStats, 60_000)
 
     return () => {
       clearInterval(syncInterval)
+      clearInterval(statsInterval)
       clearTimeout(reconnectTimer.current)
       wsRef.current?.close()
     }
-  }, [fetchSnapshot, connectWs])
+  }, [fetchSnapshot, fetchStats, connectWs])
 
   if (loading) return <p className="loading">Loading dashboard…</p>
-  if (error) return <p className="error">{error}</p>
 
   return (
     <div>
-      <div className="section-header" style={{ marginBottom: 16 }}>
-        <h2>Live Line Dashboard</h2>
+      {/* Header row */}
+      <div className="section-header" style={{ marginBottom: 18 }}>
+        <h2>Factory Dashboard</h2>
         <WsChip state={wsState} />
         {lastUpdate && (
-          <span style={{ fontSize: 11, color: '#556' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
             updated {new Date(lastUpdate).toLocaleTimeString()}
           </span>
         )}
-        <button onClick={fetchSnapshot} className="btn-sm">Refresh</button>
+        <button onClick={() => { fetchSnapshot(); fetchStats() }} className="btn-sm">Refresh</button>
       </div>
 
+      {/* Analytics stats (KPI + tables) */}
+      {statsError ? (
+        <p className="error" style={{ marginBottom: 16 }}>Stats: {statsError}</p>
+      ) : stats ? (
+        <StatsSection stats={stats} />
+      ) : (
+        <p className="loading" style={{ marginBottom: 16 }}>Loading stats…</p>
+      )}
+
+      {/* Divider */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16,
+        color: 'var(--text-3)', fontSize: 11, fontWeight: 700,
+        textTransform: 'uppercase', letterSpacing: '0.06em',
+      }}>
+        <div style={{ flex: 1, height: 1, background: 'var(--border-dim)' }} />
+        <span>Live Node View</span>
+        <div style={{ flex: 1, height: 1, background: 'var(--border-dim)' }} />
+      </div>
+
+      {/* Live line cards */}
       {lines.length === 0 ? (
-        <p className="empty">No lines configured. Create a factory and line in the database.</p>
+        <p className="empty">No lines configured yet.</p>
       ) : (
         lines.map((line) => <LineCard key={line.id} line={line} />)
       )}
 
+      {/* Legend */}
       <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-3)', display: 'flex', gap: 16 }}>
         <span><span style={{ color: 'var(--success)' }}>●</span> Active &lt;30s</span>
         <span><span style={{ color: 'var(--warning)' }}>●</span> Stale &lt;2 min</span>

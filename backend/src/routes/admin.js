@@ -93,6 +93,118 @@ router.post('/nodes/:nodeId/reconfig', requirePerm('nodes.config'), async (req, 
   }
 });
 
+// ─── Dashboard aggregate stats ───────────────────────────────────────────────
+
+router.get('/dashboard/stats', async (_req, res) => {
+  try {
+    const [bRow, sRow, lineRows, ctrRows, nRow, aRow] = await Promise.all([
+
+      // Bundle status counts + completed-today via session end_ts
+      query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'ISSUED')      AS issued,
+          COUNT(*) FILTER (WHERE status = 'IN_PROGRESS') AS in_progress,
+          COUNT(*) FILTER (WHERE status = 'COMPLETED')   AS completed,
+          COUNT(*) FILTER (WHERE status = 'LOST')        AS lost,
+          (SELECT COUNT(*) FROM bundles b2
+           WHERE b2.status = 'COMPLETED'
+           AND EXISTS (
+             SELECT 1 FROM sessions s2
+             WHERE s2.bundle_id = b2.id AND s2.end_ts >= CURRENT_DATE
+           )
+          ) AS completed_today
+        FROM bundles
+      `),
+
+      // Today's piece counts
+      query(`
+        SELECT
+          COALESCE(SUM(count_pass) FILTER (WHERE module_type = 'INPUT'), 0)                 AS input_today,
+          COALESCE(SUM(count_pass) FILTER (WHERE module_type IN ('OUTPUT_1','OUTPUT_2')), 0) AS output_today
+        FROM sessions
+        WHERE start_ts >= CURRENT_DATE
+      `),
+
+      // Per-line aggregates (all time)
+      query(`
+        SELECT
+          l.id, l.name,
+          COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'IN_PROGRESS') AS active_bundles,
+          COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'COMPLETED')   AS completed_bundles,
+          COALESCE(SUM(s.count_pass) FILTER (WHERE s.module_type = 'INPUT'), 0)                 AS input_pieces,
+          COALESCE(SUM(s.count_pass) FILTER (WHERE s.module_type IN ('OUTPUT_1','OUTPUT_2')), 0) AS output_pieces,
+          COUNT(DISTINCT n.id) FILTER (WHERE n.status = 'ACTIVE')      AS total_nodes,
+          COUNT(DISTINCT n.id) FILTER (
+            WHERE n.status = 'ACTIVE' AND n.last_seen_at > NOW() - INTERVAL '30 seconds'
+          ) AS active_nodes
+        FROM lines l
+        LEFT JOIN nodes n ON n.line_id = l.id
+        LEFT JOIN bundles b ON b.line_id = l.id
+        LEFT JOIN sessions s ON s.bundle_id = b.id
+        GROUP BY l.id, l.name
+        ORDER BY l.id
+      `),
+
+      // Per-contractor aggregates
+      query(`
+        SELECT
+          c.id, c.name AS contractor_name, c.code,
+          COUNT(DISTINCT b.id)                                              AS bundles_assigned,
+          COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'COMPLETED')       AS bundles_completed,
+          COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'IN_PROGRESS')     AS bundles_active,
+          COALESCE(SUM(b.declared_pieces), 0)                              AS declared_pieces,
+          COALESCE(SUM(s.count_pass) FILTER (WHERE s.module_type = 'INPUT'), 0)                 AS input_pieces,
+          COALESCE(SUM(s.count_pass) FILTER (WHERE s.module_type IN ('OUTPUT_1','OUTPUT_2')), 0) AS output_pieces
+        FROM contractors c
+        INNER JOIN bundles b ON b.contractor_id = c.id
+        LEFT JOIN sessions s ON s.bundle_id = b.id
+        GROUP BY c.id, c.name, c.code
+        ORDER BY bundles_assigned DESC
+      `),
+
+      // Node health counts
+      query(`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'ACTIVE')  AS total,
+          COUNT(*) FILTER (
+            WHERE status = 'ACTIVE' AND last_seen_at > NOW() - INTERVAL '30 seconds'
+          ) AS active,
+          COUNT(*) FILTER (
+            WHERE status = 'ACTIVE'
+            AND last_seen_at BETWEEN NOW() - INTERVAL '120 seconds' AND NOW() - INTERVAL '30 seconds'
+          ) AS stale,
+          COUNT(*) FILTER (
+            WHERE status = 'ACTIVE'
+            AND (last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL '120 seconds')
+          ) AS offline,
+          COUNT(*) FILTER (WHERE status = 'PENDING') AS pending
+        FROM nodes
+      `),
+
+      // Alert counts
+      query(`
+        SELECT
+          COUNT(*) FILTER (WHERE resolved_at IS NULL)                             AS open,
+          COUNT(*) FILTER (WHERE resolved_at IS NULL AND severity = 'HIGH')       AS high_severity,
+          COUNT(*) FILTER (WHERE resolved_at IS NULL AND acknowledged_at IS NULL)  AS unacknowledged
+        FROM alerts
+      `),
+    ]);
+
+    res.json({
+      bundles:     bRow.rows[0],
+      sessions:    sRow.rows[0],
+      lines:       lineRows.rows,
+      contractors: ctrRows.rows,
+      nodes:       nRow.rows[0],
+      alerts:      aRow.rows[0],
+    });
+  } catch (err) {
+    console.error('dashboard/stats error', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Live dashboard snapshot ─────────────────────────────────────────────────
 
 router.get('/dashboard', async (_req, res) => {
