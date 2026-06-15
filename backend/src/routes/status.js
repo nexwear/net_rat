@@ -40,11 +40,16 @@ router.get('/status', async (_req, res) => {
 router.get('/scans/recent', async (req, res) => {
   const kind = req.query.kind || 'ASSIGN_SCAN';
   const minutes = Number(req.query.minutes) || 10;
+  const adminOnly = kind === 'ASSIGN_SCAN' || req.query.adminOnly === 'true';
   const { rows } = await query(
-    `SELECT event_id, node_id, card_uid, kind, bundle_id, ts
-     FROM scan_events
-     WHERE kind = $1::scan_kind AND ts > NOW() - ($2 || ' minutes')::interval
-     ORDER BY ts DESC`,
+    `SELECT se.event_id, se.node_id, se.module_type, se.card_uid, se.kind, se.bundle_id, se.ts,
+            c.card_number, c.label AS card_label, c.status AS card_status
+     FROM scan_events se
+     LEFT JOIN cards c ON c.uid = se.card_uid
+     WHERE se.kind = $1::scan_kind
+       AND se.ts > NOW() - ($2 || ' minutes')::interval
+       ${adminOnly ? "AND se.module_type = 'ADMIN'" : ''}
+     ORDER BY se.ts DESC`,
     [kind, minutes]
   );
   res.json(rows);

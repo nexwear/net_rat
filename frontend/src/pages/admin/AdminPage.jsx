@@ -66,13 +66,13 @@ const ALL_TABS = [
     key:  'bundles',
     label: 'Bundles',
     icon:  IC.bundles,
-    help:  'A bundle is a batch of garments moving through the line. Create one, assign an NFC card, then track it through each production stage.',
+    help:  'A bundle is a batch of garments moving through the line. Create one (with contractor), then tap a card on the **admin room reader** to assign it — admin scans are only for card→bundle assignment, not line counting.',
   },
   {
     key:  'cards',
     label: 'Cards',
     icon:  IC.cards,
-    help:  'Register NFC cards with a friendly number (001, 002…). Use Scan Mode with a USB RFID reader to register or look up cards instantly.',
+    help:  'Register NFC cards with a friendly number (001, 002…). Use **Scan Mode** with a USB desktop reader to register cards. Card assignment to bundles is done on the **admin room NFC reader** in the Bundles tab.',
   },
   {
     key:  'ota',

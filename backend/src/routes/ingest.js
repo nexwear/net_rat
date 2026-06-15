@@ -54,6 +54,9 @@ router.post('/scan', deviceAuth, async (req, res) => {
       cardUid: body.cardUid,
       bundleId: result.bundleId,
       sessionId: result.sessionId,
+      cardNumber: result.cardNumber,
+      cardStatus: result.cardStatus,
+      newlyRegistered: result.newlyRegistered,
     };
     broker.broadcast('scan_event', payload);
     mqtt.publish(`factory/nodes/${req.node.id}/scan`, payload);

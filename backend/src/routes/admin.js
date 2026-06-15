@@ -1,6 +1,6 @@
 const express = require('express');
 const { query } = require('../db');
-const { approveDevice } = require('../services/devices');
+const { approveDevice, ensureCardRegistered } = require('../services/devices');
 const { listAlerts, ackAlert } = require('../services/alerts');
 const { jwtAuth, requirePerm } = require('../middleware/rbac');
 
@@ -383,18 +383,34 @@ router.post('/cards', requirePerm('cards.pool'), async (req, res) => {
     const { uid, cardNumber, label } = req.body || {};
     if (!uid) return res.status(400).json({ error: 'uid required' });
 
+    const normalized = uid.trim().toUpperCase();
+    const { rows: existing } = await query(
+      'SELECT uid, card_number, label, status, current_bundle_id FROM cards WHERE uid = $1',
+      [normalized]
+    );
+    if (existing.length > 0) {
+      if (label) {
+        await query('UPDATE cards SET label = $2 WHERE uid = $1', [normalized, label.trim()]);
+        existing[0].label = label.trim();
+      }
+      return res.json(existing[0]);
+    }
+
     let num = cardNumber != null ? Number(cardNumber) : null;
     if (num == null) {
-      const { rows } = await query('SELECT COALESCE(MAX(card_number), 0) + 1 AS next FROM cards');
-      num = rows[0].next;
+      const card = await ensureCardRegistered(normalized);
+      if (label) {
+        await query('UPDATE cards SET label = $2 WHERE uid = $1', [normalized, label.trim()]);
+        card.label = label.trim();
+      }
+      return res.status(201).json(card);
     }
 
     const { rows } = await query(
       `INSERT INTO cards (uid, family, status, card_number, label)
        VALUES ($1, 'UNKNOWN', 'AVAILABLE', $2, $3)
-       ON CONFLICT (uid) DO UPDATE SET card_number = $2, label = COALESCE($3, cards.label)
        RETURNING uid, card_number, label, status`,
-      [uid.trim().toUpperCase(), num, label || null]
+      [normalized, num, label || null]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -606,29 +622,34 @@ router.post('/bundles/:bundleId/assign-card', async (req, res) => {
 
     if (!uid) return res.status(400).json({ error: 'cardUid or cardNumber required' });
 
+    const card = await ensureCardRegistered(uid);
+    if (!card) return res.status(400).json({ error: 'invalid card uid' });
+
     const { bundleId } = req.params;
     const { rows: bundles } = await query('SELECT id FROM bundles WHERE id = $1', [bundleId]);
     if (!bundles.length) return res.status(404).json({ error: 'bundle not found' });
 
-    // Check not already assigned to a different bundle
-    const { rows: existing } = await query('SELECT current_bundle_id, status FROM cards WHERE uid = $1', [uid]);
-    if (existing.length > 0 && existing[0].current_bundle_id && existing[0].current_bundle_id !== bundleId) {
+    if (card.current_bundle_id && card.current_bundle_id !== bundleId) {
       return res.status(409).json({ error: 'card is already assigned to another bundle' });
     }
-    if (existing.length > 0 && existing[0].status === 'IN_USE' && existing[0].current_bundle_id !== bundleId) {
+    if (card.status === 'IN_USE' && card.current_bundle_id && card.current_bundle_id !== bundleId) {
       return res.status(409).json({ error: 'card is currently IN_USE' });
     }
 
     await query(
-      `INSERT INTO cards (uid, family, status, current_bundle_id)
-       VALUES ($1, 'UNKNOWN', 'IN_USE', $2)
-       ON CONFLICT (uid) DO UPDATE SET status = 'IN_USE', current_bundle_id = $2`,
+      `UPDATE cards SET status = 'IN_USE', current_bundle_id = $2 WHERE uid = $1`,
       [uid, bundleId]
     );
     await query('UPDATE bundles SET card_uid = $1 WHERE id = $2', [uid, bundleId]);
 
-    const { rows: info } = await query('SELECT card_number, label FROM cards WHERE uid = $1', [uid]);
-    res.json({ ok: true, bundleId, cardUid: uid, cardNumber: info[0]?.card_number, label: info[0]?.label });
+    res.json({
+      ok: true,
+      bundleId,
+      cardUid: uid,
+      cardNumber: card.card_number,
+      label: card.label,
+      newlyRegistered: card.newlyRegistered ?? false,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

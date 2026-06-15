@@ -247,6 +247,123 @@ function EditModal({ card, onClose, onDone }) {
   )
 }
 
+// ─── Admin room NFC reader panel ─────────────────────────────────────────────
+
+function AdminReaderPanel({ onRegistered }) {
+  const seenRef = useRef(new Set())
+  const [lastTap, setLastTap] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function poll() {
+      try {
+        const res = await fetch(
+          `${API_BASE}/v1/scans/recent?kind=ASSIGN_SCAN&minutes=2`,
+          { headers: adminHeaders() }
+        )
+        const scans = await res.json()
+        if (!Array.isArray(scans) || cancelled) return
+        for (const s of scans) {
+          if (!s.event_id || !s.card_uid || seenRef.current.has(s.event_id)) continue
+          seenRef.current.add(s.event_id)
+          setLastTap({
+            uid: s.card_uid,
+            cardNumber: s.card_number,
+            status: s.card_status,
+            label: s.card_label,
+            ts: s.ts,
+          })
+          onRegistered()
+          return
+        }
+      } catch (e) {
+        if (!cancelled) setError(e.message)
+      }
+    }
+
+    poll()
+    const id = setInterval(poll, 1500)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [onRegistered])
+
+  const STAT_COLOR = { AVAILABLE: 'var(--success)', IN_USE: 'var(--warning)', LOST: 'var(--danger)' }
+
+  return (
+    <div style={{
+      background: 'var(--surface)',
+      border: '2px solid var(--brand)',
+      borderRadius: 10,
+      padding: '16px 20px',
+      marginBottom: 20,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 12,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{
+          width: 8, height: 8, borderRadius: '50%',
+          background: 'var(--brand)',
+          boxShadow: '0 0 6px var(--brand)',
+          animation: 'pulse 1.5s infinite',
+          flexShrink: 0,
+        }} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--brand)' }}>Admin Room Reader</span>
+        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+          — Tap a card on the <strong>admin NFC reader</strong>. New cards get the next number (001, 002…); known cards show their existing number.
+        </span>
+      </div>
+
+      <p style={{ fontSize: 12, color: 'var(--text-3)', margin: 0 }}>
+        Waiting for tap…
+      </p>
+
+      {error && <p className="error" style={{ margin: 0 }}>{error}</p>}
+
+      {lastTap && (
+        <div style={{
+          display: 'flex', gap: 12, alignItems: 'center',
+          background: 'var(--surface-1)',
+          border: '1px solid var(--border)',
+          borderRadius: 8, padding: '12px 14px',
+        }}>
+          <span style={{
+            fontSize: 28, fontWeight: 800, fontFamily: 'var(--mono)',
+            color: STAT_COLOR[lastTap.status] || 'var(--text)',
+          }}>
+            {fmt(lastTap.cardNumber)}
+          </span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-2)', fontWeight: 600 }}>
+              {lastTap.label || lastTap.uid}
+            </div>
+            {lastTap.label && (
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-3)' }}>{lastTap.uid}</div>
+            )}
+            <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+              {new Date(lastTap.ts).toLocaleTimeString()}
+            </div>
+          </div>
+          {lastTap.status && (
+            <span className="badge" style={{
+              background: lastTap.status === 'AVAILABLE' ? 'rgba(34,197,94,0.12)'
+                         : lastTap.status === 'IN_USE'    ? 'rgba(245,158,11,0.12)'
+                         : 'rgba(239,68,68,0.12)',
+              color: STAT_COLOR[lastTap.status],
+            }}>
+              {lastTap.status}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── RFID Scan Mode panel ─────────────────────────────────────────────────────
 
 function ScanModePanel({ cards, nextNumber, onRegistered }) {
@@ -317,7 +434,7 @@ function ScanModePanel({ cards, nextNumber, onRegistered }) {
           flexShrink: 0,
         }} />
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--brand)' }}>RFID Scan Mode</span>
-        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>— hold card to reader. New cards auto-register with next number.</span>
+        <span style={{ fontSize: 11, color: 'var(--text-3)' }}>— USB desktop reader for <strong>registering</strong> cards. To assign a card to a bundle, use the admin room reader in the Bundles tab.</span>
       </div>
 
       <div style={{ display: 'flex', gap: 8 }}>
@@ -415,6 +532,7 @@ export default function CardsTab() {
   const [editCard, setEditCard] = useState(null)
   const [filter, setFilter]     = useState('ALL')
   const [scanMode, setScanMode] = useState(false)
+  const [adminReader, setAdminReader] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -467,10 +585,17 @@ export default function CardsTab() {
         <h2>Card Registry</h2>
         <button
           className={scanMode ? 'btn-sm btn-primary' : 'btn-sm'}
-          onClick={() => setScanMode((v) => !v)}
+          onClick={() => { setScanMode((v) => !v); setAdminReader(false) }}
           style={scanMode ? { boxShadow: '0 0 0 2px var(--brand)' } : {}}
         >
-          {scanMode ? '● Scan Mode ON' : 'Scan Mode'}
+          {scanMode ? '● USB Scan ON' : 'USB Scan'}
+        </button>
+        <button
+          className={adminReader ? 'btn-sm btn-primary' : 'btn-sm'}
+          onClick={() => { setAdminReader((v) => !v); setScanMode(false) }}
+          style={adminReader ? { boxShadow: '0 0 0 2px var(--brand)' } : {}}
+        >
+          {adminReader ? '● Admin Reader ON' : 'Admin Reader'}
         </button>
         <button className="btn-sm btn-primary" onClick={() => setShowReg(true)}>+ Register Card</button>
         <button className="btn-sm" onClick={() => setShowRange(true)}>+ Register Range</button>
@@ -480,6 +605,9 @@ export default function CardsTab() {
       {/* RFID Scan Mode */}
       {scanMode && (
         <ScanModePanel cards={cards} nextNumber={nextNumber} onRegistered={load} />
+      )}
+      {adminReader && (
+        <AdminReaderPanel onRegistered={load} />
       )}
 
       {/* Status filter chips */}

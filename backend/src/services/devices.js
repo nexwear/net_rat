@@ -120,6 +120,30 @@ async function resolveBundle(cardUid) {
   return rows[0]?.current_bundle_id || null;
 }
 
+/** Register UID in the card pool if missing; always returns card_number when possible. */
+async function ensureCardRegistered(cardUid) {
+  const uid = (cardUid || '').trim().toUpperCase();
+  if (!uid) return null;
+
+  const { rows } = await query(
+    'SELECT uid, card_number, label, status, current_bundle_id FROM cards WHERE uid = $1',
+    [uid]
+  );
+  if (rows.length > 0) {
+    return { ...rows[0], newlyRegistered: false };
+  }
+
+  const { rows: next } = await query('SELECT COALESCE(MAX(card_number), 0) + 1 AS next FROM cards');
+  const num = next[0].next;
+  const { rows: ins } = await query(
+    `INSERT INTO cards (uid, family, status, card_number)
+     VALUES ($1, 'UNKNOWN', 'AVAILABLE', $2)
+     RETURNING uid, card_number, label, status, current_bundle_id`,
+    [uid, num]
+  );
+  return { ...ins[0], newlyRegistered: true };
+}
+
 // ─── Pulses-per-piece (PPP) calibration ──────────────────────────────────────
 // INPUT / OUTPUT_1 estimate pieces as (motor rotations / PPP). PPP is learned
 // per garment style + size + operation and corrected against the OUTPUT_2
@@ -257,6 +281,20 @@ async function runYieldChecks({ count_pass: pass, count_cycle: cycle, node_id: n
 
 async function ingestScan(node, body) {
   const { eventId, seq, kind, cardUid, ts, tsValid } = body;
+
+  // Admin-room reader: ASSIGN_SCAN only (card → bundle). Line nodes never emit this.
+  if (node.module_type === 'ADMIN') {
+    if (kind !== 'ASSIGN_SCAN') {
+      const err = new Error('ADMIN nodes only accept ASSIGN_SCAN');
+      err.status = 400;
+      throw err;
+    }
+  } else if (kind === 'ASSIGN_SCAN') {
+    const err = new Error('ASSIGN_SCAN only allowed from ADMIN nodes');
+    err.status = 400;
+    throw err;
+  }
+
   await checkSeq(node.id, seq);
 
   const dup = await query('SELECT 1 FROM scan_events WHERE event_id = $1', [eventId]);
@@ -264,7 +302,12 @@ async function ingestScan(node, body) {
     return { duplicate: true };
   }
 
-  const bundleId = await resolveBundle(cardUid);
+  let cardInfo = null;
+  if (kind === 'ASSIGN_SCAN' && cardUid) {
+    cardInfo = await ensureCardRegistered(cardUid);
+  }
+
+  const bundleId = cardInfo?.current_bundle_id || (await resolveBundle(cardUid));
   const when = parseTs(ts, tsValid);
 
   await query(
@@ -323,10 +366,24 @@ async function ingestScan(node, body) {
     }
   }
 
-  return { ok: true, bundleId, sessionId };
+  return {
+    ok: true,
+    bundleId,
+    sessionId,
+    cardUid: cardUid || cardInfo?.uid,
+    cardNumber: cardInfo?.card_number ?? null,
+    cardStatus: cardInfo?.status ?? null,
+    cardLabel: cardInfo?.label ?? null,
+    newlyRegistered: cardInfo?.newlyRegistered ?? false,
+  };
 }
 
 async function ingestSession(node, body) {
+  if (node.module_type === 'ADMIN') {
+    const err = new Error('ADMIN nodes do not report production sessions');
+    err.status = 400;
+    throw err;
+  }
   const { eventId, seq, sessionId, cardUid, type, counts, currentAmps, closeReason, ts, tsValid } =
     body;
   await checkSeq(node.id, seq);
@@ -392,6 +449,11 @@ async function ingestSession(node, body) {
 }
 
 async function ingestUnassigned(node, body) {
+  if (node.module_type === 'ADMIN') {
+    const err = new Error('ADMIN nodes do not report unassigned counts');
+    err.status = 400;
+    throw err;
+  }
   const { eventId, seq, cardUid, counts, ts, tsValid } = body;
   await checkSeq(node.id, seq);
 
@@ -468,6 +530,7 @@ module.exports = {
   ingestUnassigned,
   ingestHeartbeat,
   resolveBundle,
+  ensureCardRegistered,
   lookupPpp,
   reconcilePpp,
 };

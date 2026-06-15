@@ -141,10 +141,13 @@ function AssignCardModal({ bundle, onClose, onDone }) {
   const [available, setAvailable] = useState([])
   const [selected, setSelected]   = useState('')
   const [manualUid, setManualUid] = useState('')
-  const [useManual, setUseManual] = useState(false)
+  const [mode, setMode] = useState('admin') // admin | pick | manual
   const [loading, setLoading]     = useState(false)
   const [fetching, setFetching]   = useState(true)
   const [error, setError]         = useState('')
+  const [waitingTap, setWaitingTap] = useState(true)
+  const [lastTap, setLastTap] = useState(null)
+  const seenScanRef = useRef(new Set())
 
   useEffect(() => {
     fetch(`${API_BASE}/v1/admin/cards/available`, { headers: adminHeaders() })
@@ -153,24 +156,79 @@ function AssignCardModal({ bundle, onClose, onDone }) {
         setAvailable(Array.isArray(data) ? data : [])
         if (data.length > 0) setSelected(String(data[0].card_number ?? ''))
       })
-      .catch(() => setUseManual(true))
+      .catch(() => setMode('manual'))
       .finally(() => setFetching(false))
   }, [])
+
+  async function assignUid(uid) {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch(`${API_BASE}/v1/admin/bundles/${bundle.id}/assign-card`, {
+        method: 'POST',
+        headers: adminHeaders(),
+        body: JSON.stringify({ cardUid: uid.trim().toUpperCase() }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed')
+      onDone()
+    } catch (e) {
+      setError(e.message)
+      setWaitingTap(true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Poll admin-room ASSIGN_SCAN events (ADMIN nodes only).
+  useEffect(() => {
+    if (mode !== 'admin' || !waitingTap || loading) return undefined
+    let cancelled = false
+
+    async function poll() {
+      try {
+        const res = await fetch(
+          `${API_BASE}/v1/scans/recent?kind=ASSIGN_SCAN&minutes=2`,
+          { headers: adminHeaders() }
+        )
+        const scans = await res.json()
+        if (!Array.isArray(scans) || cancelled) return
+        for (const s of scans) {
+          if (!s.event_id || !s.card_uid || seenScanRef.current.has(s.event_id)) continue
+          seenScanRef.current.add(s.event_id)
+          setLastTap({
+            uid: s.card_uid,
+            cardNumber: s.card_number,
+            status: s.card_status,
+          })
+          setWaitingTap(false)
+          await assignUid(s.card_uid)
+          return
+        }
+      } catch (_) {}
+    }
+
+    poll()
+    const id = setInterval(poll, 1500)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [mode, waitingTap, loading, bundle.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function submit() {
     setLoading(true); setError('')
     try {
-      const body = useManual
-        ? { cardUid: manualUid.trim().toUpperCase() }
-        : { cardNumber: Number(selected) }
-
-      if (useManual && !manualUid.trim()) throw new Error('Card UID required')
-      if (!useManual && !selected) throw new Error('Select a card')
-
+      if (mode === 'manual') {
+        if (!manualUid.trim()) throw new Error('Card UID required')
+        await assignUid(manualUid)
+        return
+      }
+      if (!selected) throw new Error('Select a card')
       const res = await fetch(`${API_BASE}/v1/admin/bundles/${bundle.id}/assign-card`, {
         method: 'POST',
         headers: adminHeaders(),
-        body: JSON.stringify(body),
+        body: JSON.stringify({ cardNumber: Number(selected) }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed')
@@ -188,13 +246,63 @@ function AssignCardModal({ bundle, onClose, onDone }) {
         <h2>Assign Card</h2>
         <p className="modal-node-id">Bundle {bundle.id.slice(0, 8)}… · {bundle.declared_pieces} pcs · {bundle.contractor_name || 'no contractor'}</p>
 
-        {!useManual ? (
+        <div className="reconfig-tabs" style={{ marginBottom: 14 }}>
+          {[
+            ['admin', 'Admin reader'],
+            ['pick', 'Pick card #'],
+            ['manual', 'Enter UID'],
+          ].map(([k, label]) => (
+            <button
+              key={k}
+              type="button"
+              className={mode === k ? 'rtab active' : 'rtab'}
+              onClick={() => { setMode(k); setError(''); setWaitingTap(true) }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {mode === 'admin' && (
+          <div style={{
+            background: 'var(--surface-2)', borderRadius: 8, padding: '14px 16px',
+            border: '1px solid var(--brand)', marginBottom: 12,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{
+                width: 8, height: 8, borderRadius: '50%', background: 'var(--brand)',
+                boxShadow: waitingTap ? '0 0 6px var(--brand)' : 'none',
+              }} />
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--brand)' }}>
+                {loading ? 'Assigning…' : waitingTap ? 'Waiting for admin reader tap' : 'Processing…'}
+              </span>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text-3)', margin: 0, lineHeight: 1.5 }}>
+              Tap the NFC card on the <strong>admin room reader</strong>. This scan is only used to link the card to this bundle — it does not start a production session.
+            </p>
+            {lastTap?.cardNumber != null && (
+              <div style={{
+                marginTop: 10, display: 'flex', alignItems: 'center', gap: 10,
+                background: 'var(--surface-1)', borderRadius: 6, padding: '8px 10px',
+              }}>
+                <span style={{ fontSize: 20, fontWeight: 800, fontFamily: 'var(--mono)' }}>
+                  {fmt(lastTap.cardNumber)}
+                </span>
+                <span style={{ fontSize: 11, color: 'var(--text-3)', fontFamily: 'var(--mono)' }}>
+                  {lastTap.uid}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {mode === 'pick' && (
           <>
             <label>Select Available Card</label>
             {fetching ? (
               <p style={{ color: 'var(--text-3)', fontSize: 12 }}>Loading available cards…</p>
             ) : available.length === 0 ? (
-              <p className="warn-text">No registered cards available. Register cards in the Cards tab first, or enter a UID manually.</p>
+              <p className="warn-text">No registered cards available. Register cards in the Cards tab first, or use admin reader / manual UID.</p>
             ) : (
               <select value={selected} onChange={(e) => setSelected(e.target.value)} autoFocus>
                 {available.map((c) => (
@@ -204,24 +312,14 @@ function AssignCardModal({ bundle, onClose, onDone }) {
                 ))}
               </select>
             )}
-            <button
-              style={{ fontSize: 11, color: 'var(--text-3)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}
-              onClick={() => setUseManual(true)}
-            >
-              Enter UID manually instead →
-            </button>
           </>
-        ) : (
+        )}
+
+        {mode === 'manual' && (
           <>
             <label>Card UID (hex)</label>
             <input value={manualUid} onChange={(e) => setManualUid(e.target.value)}
               placeholder="e.g. A1B2C3D4" autoFocus />
-            <button
-              style={{ fontSize: 11, color: 'var(--text-3)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}
-              onClick={() => setUseManual(false)}
-            >
-              ← Pick from registered cards
-            </button>
           </>
         )}
 
@@ -229,10 +327,12 @@ function AssignCardModal({ bundle, onClose, onDone }) {
 
         <div className="modal-actions">
           <button onClick={onClose} disabled={loading}>Cancel</button>
-          <button className="btn-sm btn-primary" onClick={submit}
-            disabled={loading || (!useManual && available.length === 0 && !fetching)}>
-            {loading ? 'Assigning…' : 'Assign'}
-          </button>
+          {mode !== 'admin' && (
+            <button className="btn-sm btn-primary" onClick={submit}
+              disabled={loading || (mode === 'pick' && available.length === 0 && !fetching)}>
+              {loading ? 'Assigning…' : 'Assign'}
+            </button>
+          )}
         </div>
       </div>
     </div>
