@@ -40,13 +40,15 @@ async function getNode(nodeId) {
   return rows[0] || null;
 }
 
-// Latest open session on a node → its live cumulative counts.
+// Latest open session on a node → its live cumulative counts + latest amps.
 async function getNodeLiveCycle(nodeId) {
   const { rows } = await query(
-    `SELECT id AS session_id, card_uid, count_cycle, count_pass, start_ts
-       FROM sessions
-      WHERE node_id = $1 AND end_ts IS NULL
-      ORDER BY start_ts DESC NULLS LAST
+    `SELECT s.id AS session_id, s.card_uid, s.count_cycle, s.count_pass, s.start_ts,
+            (SELECT cs.current_amps FROM count_samples cs
+              WHERE cs.session_id = s.id ORDER BY cs.ts DESC LIMIT 1) AS amps
+       FROM sessions s
+      WHERE s.node_id = $1 AND s.end_ts IS NULL
+      ORDER BY s.start_ts DESC NULLS LAST
       LIMIT 1`,
     [nodeId]
   );
@@ -56,6 +58,7 @@ async function getNodeLiveCycle(nodeId) {
     cardUid: rows[0].card_uid,
     cycle: rows[0].count_cycle ?? 0,
     pass: rows[0].count_pass ?? 0,
+    amps: rows[0].amps ?? null,
     startTs: rows[0].start_ts,
   };
 }
@@ -97,7 +100,7 @@ function buildState(t, marks, live) {
       at: m.marked_at,
     })),
     live: live
-      ? { sessionId: live.sessionId, cardUid: live.cardUid, cycle: live.cycle, pass: live.pass }
+      ? { sessionId: live.sessionId, cardUid: live.cardUid, cycle: live.cycle, pass: live.pass, amps: live.amps ?? null }
       : null,
   };
 }
@@ -247,7 +250,7 @@ async function getLiveForNode(nodeId) {
   return {
     nodeId,
     moduleType: node.module_type,
-    live: live ? { sessionId: live.sessionId, cardUid: live.cardUid, cycle: live.cycle, pass: live.pass } : null,
+    live: live ? { sessionId: live.sessionId, cardUid: live.cardUid, cycle: live.cycle, pass: live.pass, amps: live.amps ?? null } : null,
     training,
   };
 }

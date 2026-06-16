@@ -156,6 +156,17 @@ export default function TrainingTab() {
 
   const sessionOpen = !!(training?.live || live)
   const liveCycle = training?.live?.cycle ?? live?.cycle ?? null
+  const livePass = training?.live?.pass ?? live?.pass ?? null
+  const liveAmps = training?.live?.amps ?? live?.amps ?? null
+  // Rotations accumulated toward the in-progress piece (since the last mark, or
+  // the baseline at start) — watch this climb, then mark when the garment is done.
+  const lastMarkCycle = training
+    ? (training.marks.length ? training.marks[training.marks.length - 1].cycle : training.baselineCycle)
+    : null
+  const pieceRot =
+    training && liveCycle != null && lastMarkCycle != null
+      ? Math.max(0, liveCycle - lastMarkCycle)
+      : null
 
   return (
     <div>
@@ -231,6 +242,32 @@ export default function TrainingTab() {
         )}
       </div>
 
+      {/* ── Live sensor readout (visible as soon as a node is chosen) ── */}
+      {selectedNode && (
+        <div className="card" style={{ padding: 18, marginBottom: 18 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, gap: 10, flexWrap: 'wrap' }}>
+            <h3 style={{ margin: 0, fontSize: 14 }}>
+              Live sensor — {selectedNode.label || selectedNode.id}
+            </h3>
+            <span className={sessionOpen ? 'badge badge-green' : 'badge badge-yellow'}>
+              {sessionOpen ? `SESSION OPEN${live?.cardUid || training?.live?.cardUid ? ` · card ${(training?.live?.cardUid || live?.cardUid)}` : ''}` : 'waiting for card tap'}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            <Stat label="Live rotations" value={liveCycle != null ? liveCycle : '—'} accent />
+            {training && <Stat label="This piece (rot)" value={pieceRot != null ? pieceRot : '—'} accent />}
+            <Stat label="Node pieces" value={livePass != null ? livePass : '—'} />
+            <Stat label="Current" value={liveAmps != null ? `${Number(liveAmps).toFixed(2)} A` : '—'} />
+          </div>
+          {!sessionOpen && (
+            <p className="warn-text" style={{ marginBottom: 0, marginTop: 12 }}>
+              No open session — have the operator tap their bundle-assigned card on this node
+              so rotations start streaming. Then start training and mark each finished piece.
+            </p>
+          )}
+        </div>
+      )}
+
       {/* ── Save result banner ──────────────────────────────── */}
       {result?.saved && (
         <p className="success" style={{ fontSize: 14 }}>
@@ -248,11 +285,6 @@ export default function TrainingTab() {
               value={training.runningPpp != null ? Math.round(training.runningPpp) : '—'} accent />
             <Stat label="Last piece"
               value={training.lastDelta != null ? `${training.lastDelta} rot` : '—'} />
-            <Stat label="Live rotations"
-              value={liveCycle != null ? liveCycle : '—'} />
-            <Stat label="Session"
-              value={sessionOpen ? 'OPEN' : 'waiting for tap'}
-              badge={sessionOpen ? 'badge badge-green' : 'badge badge-yellow'} />
           </div>
 
           {!sessionOpen && (
