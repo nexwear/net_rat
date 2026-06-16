@@ -258,13 +258,26 @@ void SessionManager::onTap(const char* cardUid, ScanKind kindOverride) {
 
   if (hasOpenSession()) {
     if (strcmp(cardUid, _activeCardUid) == 0) {
-      closeSession(CloseReason::TAP_OUT, ScanKind::TAP_OUT);
+      // Same card = tap-out (close the bundle). Reject a re-read landing inside
+      // the guard window so a flaky PN5180 — which can momentarily lose a card
+      // that is still present — cannot auto-close a session just opened. This is
+      // the cause of sessions/counts appearing to "reset" on their own.
+      if ((now - _startMs) < TAP_OUT_WINDOW_MS) {
+        Serial.printf("[SESSION] same-card tap %lums after open — ignored (guard)\n",
+                      static_cast<unsigned long>(now - _startMs));
+        return;
+      }
+      closeSession(CloseReason::TAP_OUT, ScanKind::TAP_OUT);  // plays TAP_OUT
     } else {
-      closeSession(CloseReason::NEXT_TAP, ScanKind::AUTO_CLOSE);
-      openSession(cardUid, kindOverride);
+      // A different card while a bundle is open → reject with the error tone.
+      // The worker must tap the active card to close it before starting another,
+      // so an open bundle's count is never silently orphaned by a wrong tap.
+      if (_buzzer) _buzzer->play(BuzzPattern::ERROR);
+      Serial.printf("[SESSION] tap uid=%s REJECTED — bundle %s still open\n", cardUid,
+                    _activeCardUid);
     }
   } else {
-    openSession(cardUid, kindOverride);
+    openSession(cardUid, kindOverride);  // plays TAP_IN
   }
 
   strncpy(_lastTapUid, cardUid, sizeof(_lastTapUid) - 1);

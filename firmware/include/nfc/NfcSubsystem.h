@@ -69,6 +69,6 @@ class NfcSubsystem {
   static constexpr uint32_t ASSIGN_STUCK_MS = 15000;
   static constexpr uint32_t PERIODIC_RECOVER_MS = 120000;
   static constexpr uint32_t BUSY_STUCK_MS = 80;
-  static constexpr uint8_t ABSENT_DEBOUNCE_POLLS = 2;
+  static constexpr uint8_t ABSENT_DEBOUNCE_POLLS = 3;  // ~3 misses before "lifted"
   static constexpr uint8_t ASSIGN_ABSENT_DEBOUNCE_POLLS = 2;
 };

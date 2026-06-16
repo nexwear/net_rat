@@ -319,7 +319,15 @@ void NfcSubsystem::pollRead() {
   }
 
   if (_cardPresent) {
-    const bool present = readUid(uid);
+    bool present = readUid(uid);
+    if (!present) {
+      // One quick confirmation read. A single PN5180 miss on a card that is
+      // still present must NOT be read as a lift — that would re-arm and fire a
+      // spurious tap, closing the open session (the "count resets by itself"
+      // bug). Only a sustained absence counts as a real removal.
+      delay(8);
+      present = readUid(uid);
+    }
     if (!present) {
       if (++_absentStreak >= ABSENT_DEBOUNCE_POLLS) {
         _cardPresent = false;
