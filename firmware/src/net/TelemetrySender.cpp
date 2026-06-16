@@ -1,5 +1,6 @@
 #include "net/TelemetrySender.h"
 #include "types.h"
+#include "core/RuntimeFlags.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <HTTPClient.h>
@@ -175,7 +176,17 @@ bool TelemetrySender::sendHeartbeat(int rssi, uint32_t uptimeSec, size_t queueDe
   doc["uptime"] = uptimeSec;
   doc["fwVersion"] = _cfg.fwVersion.length() ? _cfg.fwVersion : String(FW_VERSION);
   doc["queueDepth"] = queueDepth;
-  doc["flags"] = flags;
+  // Send flags as a structured object — the server reads flags.overflow and
+  // merges this into a jsonb column, so a bare number would break ingestion.
+  JsonObject flagsObj = doc["flags"].to<JsonObject>();
+  flagsObj["overflow"] = (flags & 0x1) != 0;
+  flagsObj["freeHeap"] = ESP.getFreeHeap();
+  flagsObj["minHeap"] = ESP.getMinFreeHeap();  // low-water — catches slow leaks
+  // Per-task stack headroom (FreeRTOS high-water, bytes). Trending toward 0
+  // warns of a stack overflow before it crashes.
+  if (gNetTaskHandle) flagsObj["stkNet"] = uxTaskGetStackHighWaterMark(gNetTaskHandle);
+  if (gSensingTaskHandle) flagsObj["stkSns"] = uxTaskGetStackHighWaterMark(gSensingTaskHandle);
+  if (gCurrentTaskHandle) flagsObj["stkCur"] = uxTaskGetStackHighWaterMark(gCurrentTaskHandle);
 
   if (ConfigStore::getOpAck()) {
     doc["ackedOp"] = true;

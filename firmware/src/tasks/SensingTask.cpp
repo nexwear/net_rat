@@ -128,5 +128,5 @@ void sensingLoop(void* param) {
 void startSensingTask(const DeviceConfig& cfg, QueueHandle_t telemetryQ, QueueHandle_t commandQ,
                       std::atomic<NodeState>& nodeState, uint32_t& seqCounter) {
   static SensingContext ctx{cfg, telemetryQ, commandQ, &nodeState, &seqCounter};
-  xTaskCreatePinnedToCore(sensingLoop, "SensingTask", 12288, &ctx, 5, nullptr, 1);
+  xTaskCreatePinnedToCore(sensingLoop, "SensingTask", 12288, &ctx, 5, &gSensingTaskHandle, 1);
 }

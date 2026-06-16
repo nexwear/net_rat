@@ -13,11 +13,12 @@ struct PinMap {
   uint8_t pn5180Busy;
   uint8_t pn5180Rst;
 
-  // Sensors (‑1 = not fitted on this module). All active-HIGH IR sensors read
-  // HIGH when an object is detected.
-  int8_t horseshoeIr;  // horseshoe IR beam-break (INPUT pin 26, OUTPUT_1 pin 26)
-  int8_t currentAdc;   // current sensor ADC   (INPUT pin 34 only)
-  int8_t hall;         // hall-effect sensor    (INPUT pin 27, OUTPUT_1 pin 27)
+  // Sensors (‑1 = not fitted on this module). The horseshoe IR is a beam-break
+  // (reads LOW when the beam is blocked); the OUTPUT_2 heat-press IR sensors are
+  // active-HIGH (read HIGH when an object is detected).
+  int8_t horseshoeIr;  // horseshoe IR beam-break (INPUT pin 27, OUTPUT_1 pin 27)
+  int8_t currentAdc;   // SCT013 current sensor ADC (INPUT pin 34 only)
+  int8_t hall;         // A3144 hall-effect sensor  (INPUT pin 26, OUTPUT_1 pin 26)
   int8_t irCloth;      // heat-press: garment-present sensor (OUTPUT_2 pin 26)
   int8_t irPress;      // heat-press: press-down sensor      (OUTPUT_2 pin 27)
 
@@ -51,19 +52,19 @@ inline PinMap forModule(ModuleType type) {
 
   switch (type) {
     case ModuleType::MOD_INPUT:
-      // Horseshoe IR (26) = count_pass (pieces through beam)
-      // Hall (27)         = count_cycle (machine-cycle cross-check)
-      // Current ADC (34)  = live amps only (not counted separately)
-      p.horseshoeIr = 26;
-      p.hall        = 27;
+      // Horseshoe IR (27) = count_pass (pieces through beam, active-low break)
+      // Hall A3144 (26)   = count_cycle (motor rotations, open-collector active-low)
+      // SCT013 ADC (34)   = live amps only (not counted separately)
+      p.horseshoeIr = 27;
+      p.hall        = 26;
       p.currentAdc  = 34;
       break;
 
     case ModuleType::OUTPUT_1:
-      // Horseshoe IR (26) = count_pass
-      // Hall (27)         = count_cycle
-      p.horseshoeIr = 26;
-      p.hall        = 27;
+      // Same sensor layout as INPUT, without the current sensor.
+      // Horseshoe IR (27) = count_pass ; Hall A3144 (26) = count_cycle
+      p.horseshoeIr = 27;
+      p.hall        = 26;
       break;
 
     case ModuleType::OUTPUT_2:

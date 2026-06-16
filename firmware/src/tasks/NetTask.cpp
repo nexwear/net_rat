@@ -13,6 +13,7 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
+#include <esp_task_wdt.h>
 #include <time.h>
 
 namespace {
@@ -41,12 +42,26 @@ void setupArduinoOta(const DeviceConfig& cfg) {
   Serial.printf("[OTA] Ready as %s (PlatformIO: esp32dev-ota + --upload-port <ip>)\n", host.c_str());
 }
 
+// Mark the clock synced as soon as NTP has produced a plausible epoch. Cheap,
+// non-blocking — safe to call every loop iteration.
+bool maybeMarkTimeSynced() {
+  if (timeUtilIsSynced()) {
+    return true;
+  }
+  if (time(nullptr) > 1700000000) {
+    timeUtilMarkSynced();
+    Serial.println("[NET] clock synced");
+    return true;
+  }
+  return false;
+}
+
+// Boot-time best-effort NTP sync. Bounded (≤6s) so a missing internet uplink
+// never stalls startup — the net loop keeps retrying afterwards.
 void syncTime() {
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-  for (int i = 0; i < 20; i++) {
-    time_t now = time(nullptr);
-    if (now > 1700000000) {
-      timeUtilMarkSynced();
+  for (int i = 0; i < 12; i++) {
+    if (maybeMarkTimeSynced()) {
       return;
     }
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -65,6 +80,7 @@ void fetchCardDeclared(const DeviceConfig& cfg, QueueHandle_t commandQ, const ch
     return;
   }
 
+  http.setConnectTimeout(5000);
   http.setTimeout(5000);
   const int code = http.GET();
   String body = http.getString();
@@ -100,13 +116,44 @@ void netLoop(void* param) {
   TelemetrySender sender(ctx->cfg, store, ctx->commandQ);
   OtaMgr ota(ctx->cfg, store);
 
+  // Kick off the (non-blocking) connection, then give it a short bounded window
+  // to associate so NTP can sync before the first heartbeat. If WiFi isn't up in
+  // time we proceed anyway — the loop keeps reconnecting and re-syncing.
   wifi.connect();
+  const uint32_t connectDeadline = millis() + 12000;
+  while (!wifi.isConnected() && millis() < connectDeadline) {
+    wifi.loop();
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
   syncTime();
 
+  // Last-resort liveness watchdog, scoped to THIS task only (not the sensing /
+  // NFC task, whose watchdog was removed because PN5180 recovery tripped it).
+  // Generous 300s timeout: every network call here is already timeout-bounded,
+  // and the longest single iteration (an OTA download) self-limits via its 45s
+  // idle timeout — so this only ever fires on a genuine permanent hang, after
+  // which a reboot is the right recovery. A WDT reboot mid-OTA is safe: Update
+  // only commits on completion, so the node falls back to the running image.
+  esp_task_wdt_init(300, true);
+  esp_task_wdt_add(nullptr);
+
   uint32_t lastHeartbeatMs = 0;
+  uint32_t lastTimeSyncMs = millis();
   uint32_t bootMs = millis();
   for (;;) {
+    esp_task_wdt_reset();
     wifi.loop();
+
+    // Keep retrying NTP until the clock is valid (e.g. internet arrived after
+    // boot). Non-blocking: configTime() kicks off SNTP, success is detected on a
+    // later iteration. Avoids a reboot just to get a valid timestamp.
+    if (!timeUtilIsSynced() && wifi.isConnected()) {
+      maybeMarkTimeSynced();
+      if (millis() - lastTimeSyncMs >= 60000) {
+        lastTimeSyncMs = millis();
+        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+      }
+    }
 
     if (wifi.isConnected()) {
       setupArduinoOta(ctx->cfg);
@@ -172,7 +219,12 @@ void netLoop(void* param) {
     ota.handle(wifi.isConnected(), gSessionOpen.load());
 
     if (gCardLookup.pending.exchange(false) && wifi.isConnected()) {
-      fetchCardDeclared(ctx->cfg, ctx->commandQ, gCardLookup.cardUid);
+      // Snapshot the shared UID locally before the (millisecond-scale) HTTP call
+      // so a concurrent tap on the sensing task can't tear the buffer mid-read.
+      char uid[sizeof(gCardLookup.cardUid)];
+      strncpy(uid, gCardLookup.cardUid, sizeof(uid) - 1);
+      uid[sizeof(uid) - 1] = '\0';
+      fetchCardDeclared(ctx->cfg, ctx->commandQ, uid);
     }
 
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -183,5 +235,5 @@ void netLoop(void* param) {
 void startNetTask(const DeviceConfig& cfg, QueueHandle_t telemetryQ, QueueHandle_t commandQ,
                   std::atomic<NodeState>& nodeState, uint32_t& seqCounter) {
   static NetContext ctx{cfg, telemetryQ, commandQ, &nodeState, &seqCounter};
-  xTaskCreatePinnedToCore(netLoop, "NetTask", 16384, &ctx, 4, nullptr, 0);
+  xTaskCreatePinnedToCore(netLoop, "NetTask", 16384, &ctx, 4, &gNetTaskHandle, 0);
 }

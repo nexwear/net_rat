@@ -16,6 +16,8 @@ void generateUuid(char out[37]) {
 
 void timeUtilMarkSynced() { gTimeSynced = true; }
 
+bool timeUtilIsSynced() { return gTimeSynced; }
+
 uint64_t epochMsNow(bool* tsValidOut) {
   if (tsValidOut) {
     *tsValidOut = gTimeSynced;

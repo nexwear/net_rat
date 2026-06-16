@@ -80,6 +80,7 @@ bool OtaMgr::postJson(const String& path, const String& body, String* responseBo
     return false;
   }
 
+  http.setConnectTimeout(8000);
   http.setTimeout(10000);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-Node-Token", _cfg.token);
@@ -149,6 +150,7 @@ bool OtaMgr::downloadAndApply(const String& version, const String& url, const St
     return false;
   }
 
+  http.setConnectTimeout(8000);
   http.setTimeout(60000);
   const int code = http.GET();
   if (code != HTTP_CODE_OK) {

@@ -2,8 +2,14 @@
 #include <WiFi.h>
 
 namespace {
+// Backoff applied after a full pass over all saved credentials fails. Keeps the
+// radio from thrashing when the AP is down for a while.
 constexpr uint32_t BACKOFF_MS[] = {1000, 2000, 5000, 15000, 30000};
 constexpr size_t BACKOFF_COUNT = 5;
+// How long to wait for a single credential to associate + get an IP before
+// moving on to the next one. Non-blocking — measured across loop() calls.
+constexpr uint32_t PER_ATTEMPT_MS = 9000;
+
 bool gWifiEventsRegistered = false;
 
 void registerWifiEvents() {
@@ -41,52 +47,80 @@ WiFiManagerTask::WiFiManagerTask(const DeviceConfig& cfg) : _cfg(cfg) {
   configureSta();
 }
 
-bool WiFiManagerTask::connect() {
-  if (isConnected()) {
-    return true;
-  }
+void WiFiManagerTask::beginAttempt(uint32_t now) {
+  const auto& cred = _cfg.wifi[_credIdx];
+  Serial.printf("[WiFi] Connecting to \"%s\"...\n", cred.ssid.c_str());
+  WiFi.disconnect(false, true);
+  WiFi.begin(cred.ssid.c_str(), cred.pass.c_str());
+  _attemptStartMs = now;
+  _state = State::CONNECTING;
+}
 
+bool WiFiManagerTask::connect() {
   if (_cfg.wifi.empty()) {
     Serial.println("[WiFi] No saved credentials");
     return false;
   }
-
-  for (const auto& cred : _cfg.wifi) {
-    Serial.printf("[WiFi] Connecting to \"%s\"...\n", cred.ssid.c_str());
-    WiFi.disconnect(false, true);
-    delay(100);
-    WiFi.begin(cred.ssid.c_str(), cred.pass.c_str());
-
-    const uint32_t start = millis();
-    while (WiFi.status() != WL_CONNECTED && (millis() - start) < 20000) {
-      delay(250);
-    }
-
-    if (isConnected()) {
-      Serial.printf("[WiFi] Connected — IP %s RSSI %d\n", WiFi.localIP().toString().c_str(),
-                    WiFi.RSSI());
-      return true;
-    }
-    Serial.printf("[WiFi] Failed to join \"%s\"\n", cred.ssid.c_str());
+  if (isConnected()) {
+    _state = State::CONNECTED;
+    return true;
   }
-
-  Serial.println("[WiFi] All saved networks failed");
+  _credIdx = 0;
+  _backoffIdx = 0;
+  beginAttempt(millis());
   return false;
 }
 
+// Non-blocking reconnection state machine. Returns within a few ms in every
+// branch so the caller can keep servicing the rest of the net loop.
 void WiFiManagerTask::loop() {
-  if (isConnected()) {
-    _backoffIdx = 0;
-    return;
-  }
-
   const uint32_t now = millis();
-  if (now < _nextAttemptMs) {
+
+  if (isConnected()) {
+    if (_state != State::CONNECTED) {
+      Serial.printf("[WiFi] Connected — IP %s RSSI %d\n", WiFi.localIP().toString().c_str(),
+                    WiFi.RSSI());
+      _state = State::CONNECTED;
+      _backoffIdx = 0;
+    }
     return;
   }
 
-  connect();
-  const uint32_t delayMs = BACKOFF_MS[_backoffIdx < BACKOFF_COUNT ? _backoffIdx : BACKOFF_COUNT - 1];
-  _backoffIdx = _backoffIdx < BACKOFF_COUNT - 1 ? _backoffIdx + 1 : _backoffIdx;
-  _nextAttemptMs = now + delayMs;
+  if (_cfg.wifi.empty()) {
+    return;
+  }
+
+  switch (_state) {
+    case State::CONNECTED:
+      // Link just dropped — retry immediately, then back off if it keeps failing.
+      _state = State::IDLE;
+      _credIdx = 0;
+      _nextAttemptMs = now;
+      break;
+
+    case State::CONNECTING:
+      if ((now - _attemptStartMs) >= PER_ATTEMPT_MS) {
+        Serial.printf("[WiFi] Failed to join \"%s\"\n", _cfg.wifi[_credIdx].ssid.c_str());
+        _credIdx++;
+        if (_credIdx >= _cfg.wifi.size()) {
+          // Whole list exhausted — apply backoff before the next full pass.
+          _credIdx = 0;
+          const uint32_t delayMs =
+              BACKOFF_MS[_backoffIdx < BACKOFF_COUNT ? _backoffIdx : BACKOFF_COUNT - 1];
+          if (_backoffIdx < BACKOFF_COUNT - 1) _backoffIdx++;
+          _nextAttemptMs = now + delayMs;
+          _state = State::IDLE;
+          Serial.printf("[WiFi] All saved networks failed — retry in %lus\n", delayMs / 1000);
+        } else {
+          beginAttempt(now);
+        }
+      }
+      break;
+
+    case State::IDLE:
+      if (now >= _nextAttemptMs) {
+        beginAttempt(now);
+      }
+      break;
+  }
 }
