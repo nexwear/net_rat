@@ -7,6 +7,7 @@ import BundlesTab from './BundlesTab.jsx'
 import CardsTab from './CardsTab.jsx'
 import AlertsTab from './AlertsTab.jsx'
 import UsersTab from './UsersTab.jsx'
+import TrainingTab from './TrainingTab.jsx'
 import { getUser, clearAuth, authHeaders, apiFetch } from '../../auth.js'
 import { getTheme, toggleTheme } from '../../theme.js'
 import './admin.css'
@@ -31,6 +32,7 @@ const IC = {
   bundles:   'M8 1L2 4.5v7L8 15l6-3.5v-7L8 1zM2 4.5l6 3.5m0 0l6-3.5m-6 3.5V15',
   cards:     'M1 5a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V5zm0 3h14M4 11h3',
   ota:       'M8 2v8m-3-4 3-4 3 4M3.5 13A5 5 0 0 1 8 3a5 5 0 0 1 4.5 10',
+  training:  'M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 3.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM8 7a1 1 0 1 0 0 2 1 1 0 0 0 0-2z',
   alerts:    'M8 1a5 5 0 0 0-5 5v2.5L2 10h12l-1-1.5V6a5 5 0 0 0-5-5zM6.5 13a1.5 1.5 0 0 0 3 0',
   users:     'M5.5 7a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM1 14a4.5 4.5 0 0 1 9 0M11.5 5.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM15 14a3.5 3.5 0 0 0-7 0',
   sun:       'M8 1v1m0 12v1M1 8H2m12 0h1M3.22 3.22l.7.7m8.16 8.16.7.7M3.22 12.78l.7-.7m8.16-8.16.7-.7M8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
@@ -41,7 +43,7 @@ const IC = {
 // ── Role config ───────────────────────────────────────────────────────────────
 
 const ROLE_PERMS = {
-  SUPER_ADMIN:     ['dashboard','nodes','bundles','cards','ota','alerts','users'],
+  SUPER_ADMIN:     ['dashboard','nodes','bundles','cards','training','ota','alerts','users'],
   FACTORY_ADMIN:   ['dashboard','nodes','bundles','cards','ota','alerts','users'],
   LINE_SUPERVISOR: ['dashboard','nodes','alerts'],
   ADMIN_OPERATOR:  ['dashboard','nodes','bundles','cards'],
@@ -73,6 +75,12 @@ const ALL_TABS = [
     label: 'Cards',
     icon:  IC.cards,
     help:  'Register NFC cards (**Scan & Assign** or Register Card → Admin reader). The admin reader auto-numbers cards only while this tab is in register mode. Bundle assignment is on the Bundles tab.',
+  },
+  {
+    key:  'training',
+    label: 'Training',
+    icon:  IC.training,
+    help:  'Calibrate pulses-per-piece per garment style + size. Tap **Piece Completed** as the operator finishes each garment; the median rotations-per-piece is saved and used to estimate counts for that style.',
   },
   {
     key:  'ota',
@@ -184,6 +192,7 @@ export default function AdminPage() {
         {tab === 'nodes'     && <NodesTab />}
         {tab === 'bundles'   && <BundlesTab />}
         {tab === 'cards'     && <CardsTab />}
+        {tab === 'training'  && <TrainingTab />}
         {tab === 'ota'       && <OtaTab />}
         {tab === 'alerts'    && <AlertsTab />}
         {tab === 'users'     && <UsersTab />}

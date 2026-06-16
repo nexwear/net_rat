@@ -251,6 +251,38 @@ CREATE TABLE IF NOT EXISTS ppp_calibration (
   updated_at       TIMESTAMPTZ DEFAULT NOW(),
   PRIMARY KEY (garment_model_id, size_code, module_type)
 );
+
+-- Supervised PPP training. A super-admin opens a training run against one node
+-- + style + size, then taps "piece completed" each time the operator finishes a
+-- garment. Each mark snapshots the session's cumulative count_cycle (raw motor
+-- rotations); the per-piece deltas are reduced to a robust pulses-per-piece value
+-- that seeds ppp_calibration. baseline_cycle is the rotation count at start.
+CREATE TABLE IF NOT EXISTS ppp_training (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  node_id          VARCHAR(64) REFERENCES nodes(id) ON DELETE CASCADE,
+  module_type      module_type NOT NULL,
+  garment_model_id INT NOT NULL DEFAULT 0,
+  size_code        INT NOT NULL DEFAULT 0,
+  baseline_cycle   INT NOT NULL DEFAULT 0,
+  status           TEXT NOT NULL DEFAULT 'ACTIVE',   -- ACTIVE | SAVED | CANCELLED
+  result_ppp       REAL,
+  piece_count      INT NOT NULL DEFAULT 0,
+  started_at       TIMESTAMPTZ DEFAULT NOW(),
+  ended_at         TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS ppp_training_marks (
+  id           BIGSERIAL PRIMARY KEY,
+  training_id  UUID REFERENCES ppp_training(id) ON DELETE CASCADE,
+  piece_index  INT NOT NULL,
+  count_cycle  INT NOT NULL,
+  count_pass   INT,
+  delta_cycle  INT,
+  marked_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ppp_training_marks_tid ON ppp_training_marks(training_id, piece_index);
+CREATE INDEX IF NOT EXISTS ppp_training_active ON ppp_training(node_id) WHERE status = 'ACTIVE';
 `;
 
 async function initDb() {

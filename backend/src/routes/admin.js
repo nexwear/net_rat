@@ -7,12 +7,21 @@ const {
   setAdminReaderMode,
 } = require('../services/adminReaderMode');
 const { jwtAuth, requirePerm } = require('../middleware/rbac');
+const training = require('../services/training');
 
 const router = express.Router();
 const VALID_OP_TYPES = ['SET_MODULE_TYPE', 'SET_WIFI', 'FACTORY_RESET', 'FORCE_OTA_CHECK'];
 
 // All admin routes require authentication
 router.use(jwtAuth);
+
+// Sensitive calibration actions are SUPER_ADMIN-only.
+function requireSuperAdmin(req, res, next) {
+  if (req.user?.role !== 'SUPER_ADMIN') {
+    return res.status(403).json({ error: 'SUPER_ADMIN required' });
+  }
+  next();
+}
 
 router.get('/nodes', async (_req, res) => {
   try {
@@ -720,6 +729,8 @@ router.post('/db/clear', async (req, res) => {
         ota_events,
         alerts,
         device_tokens,
+        ppp_training_marks,
+        ppp_training,
         bundles,
         cards,
         nodes,
@@ -729,6 +740,96 @@ router.post('/db/clear', async (req, res) => {
     res.json({ ok: true, cleared: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── PPP training (supervised calibration) ───────────────────────────────────
+// SUPER_ADMIN taps "piece completed" per garment while an operator sews; the
+// per-piece rotation deltas are reduced to a pulses-per-piece value that seeds
+// ppp_calibration. See services/training.js.
+
+// Live snapshot for a node (current session counts + active run, for polling).
+router.get('/training/live/:nodeId', requireSuperAdmin, async (req, res) => {
+  try {
+    res.json(await training.getLiveForNode(req.params.nodeId));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Current saved calibration for a style+size+module (before/after display).
+router.get('/training/calibration', requireSuperAdmin, async (req, res) => {
+  try {
+    const { garmentModelId, sizeCode, moduleType } = req.query;
+    if (!moduleType) return res.status(400).json({ error: 'moduleType required' });
+    const cal = await training.getCalibration(
+      Number(garmentModelId) || 0,
+      Number(sizeCode) || 0,
+      moduleType
+    );
+    res.json(cal || null);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Batch recalibration from all historical data. apply=false → dry-run preview.
+router.post('/training/recompute', requireSuperAdmin, async (req, res) => {
+  try {
+    const apply = req.body?.apply === true;
+    const includeDeclared = req.body?.includeDeclared === true;
+    res.json(await training.recalibrateFromHistory({ apply, includeDeclared }));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+router.post('/training/start', requireSuperAdmin, async (req, res) => {
+  try {
+    const { nodeId, garmentModelId, sizeCode } = req.body || {};
+    if (!nodeId) return res.status(400).json({ error: 'nodeId required' });
+    res.json(
+      await training.startTraining({
+        nodeId,
+        garmentModelId: Number(garmentModelId) || 0,
+        sizeCode: Number(sizeCode) || 0,
+      })
+    );
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+router.get('/training/:id', requireSuperAdmin, async (req, res) => {
+  try {
+    res.json(await training.getTrainingState(req.params.id));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+router.post('/training/:id/mark', requireSuperAdmin, async (req, res) => {
+  try {
+    res.json(await training.markPiece(req.params.id));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+router.post('/training/:id/undo', requireSuperAdmin, async (req, res) => {
+  try {
+    res.json(await training.undoMark(req.params.id));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+router.post('/training/:id/finish', requireSuperAdmin, async (req, res) => {
+  try {
+    const save = req.body?.save !== false; // default: save
+    res.json(await training.finishTraining(req.params.id, save));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
