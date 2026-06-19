@@ -275,6 +275,15 @@ void SessionManager::openSession(const char* cardUid, ScanKind kind) {
   emit(TelemetryType::SCAN, kind);
   Serial.printf("[SESSION] open uid=%s session=%s ppp=%.0f\n", cardUid, _sessionId, _ppp);
   Serial.println("[SESSION] tap-out: remove card, then tap same card again");
+}
+
+void SessionManager::setCloudSessionId(const char* sessionId) {
+  if (!sessionId || !sessionId[0] || !hasOpenSession()) {
+    return;
+  }
+  strncpy(_sessionId, sessionId, sizeof(_sessionId) - 1);
+  _sessionId[sizeof(_sessionId) - 1] = '\0';
+  Serial.printf("[SESSION] cloud session id %s\n", _sessionId);
   emit(TelemetryType::SESSION_UPDATE);
   _lastEmitMs = millis();
 }

@@ -564,8 +564,15 @@ export default function DashboardTab() {
             ...nd.session,
             countPass: payload.countPass,
             countCycle: payload.countCycle,
-          } : nd.session,
+          } : {
+            sessionId: payload.sessionId,
+            cardUid: payload.cardUid,
+            countPass: payload.countPass,
+            countCycle: payload.countCycle,
+            declaredPieces: 0,
+          },
         }))
+        fetchSnapshot()
       } else if (payload.type === 'CLOSE') {
         patchNode(payload.nodeId, (nd) => ({ ...nd, session: null }))
         fetchStats()

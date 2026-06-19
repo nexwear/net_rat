@@ -15,7 +15,13 @@ enum class TelemetryType : uint8_t {
   UNASSIGNED
 };
 enum class ScanKind : uint8_t { TAP_IN, TAP_OUT, AUTO_CLOSE, ASSIGN_SCAN };
-enum class CmdType : uint8_t { REPROVISION, CARD_DECLARED, ADMIN_SCAN_FEEDBACK, SESSION_RESUME };
+enum class CmdType : uint8_t {
+  REPROVISION,
+  CARD_DECLARED,
+  ADMIN_SCAN_FEEDBACK,
+  SESSION_RESUME,
+  SESSION_SYNC
+};
 
 struct TelemetryEvent {
   TelemetryType type;

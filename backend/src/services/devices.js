@@ -473,6 +473,38 @@ async function ingestScan(node, body) {
   });
 }
 
+/** Persist counts on the canonical cloud session row (device may send a local UUID). */
+async function upsertOpenSessionCounts({ node, sessionId, bundleId, cardUid, when, pass, cycle }) {
+  if (bundleId) {
+    const { rows } = await query(
+      `INSERT INTO sessions (id, bundle_id, card_uid, module_type, node_id, start_ts, count_pass, count_cycle)
+       VALUES ($1, $2, $3, $4::module_type, $5, $6, $7, $8)
+       ON CONFLICT (bundle_id, module_type) DO UPDATE
+       SET count_pass = EXCLUDED.count_pass, count_cycle = EXCLUDED.count_cycle, node_id = EXCLUDED.node_id
+       RETURNING id`,
+      [sessionId, bundleId, cardUid, node.module_type, node.id, when, pass, cycle]
+    );
+    return rows[0]?.id || sessionId;
+  }
+
+  const { rows } = await query(
+    `UPDATE sessions SET count_pass = $2, count_cycle = $3
+     WHERE node_id = $1 AND end_ts IS NULL
+     RETURNING id`,
+    [node.id, pass, cycle]
+  );
+  if (rows[0]?.id) {
+    return rows[0].id;
+  }
+
+  await query(
+    `INSERT INTO sessions (id, bundle_id, card_uid, module_type, node_id, start_ts, count_pass, count_cycle)
+     VALUES ($1, NULL, $2, $3::module_type, $4, $5, $6, $7)`,
+    [sessionId, cardUid, node.module_type, node.id, when, pass, cycle]
+  );
+  return sessionId;
+}
+
 async function ingestSession(node, body) {
   if (node.module_type === 'ADMIN') {
     const err = new Error('ADMIN nodes do not report production sessions');
@@ -492,18 +524,21 @@ async function ingestSession(node, body) {
     if (!deviceReportsSessionOpen(body)) {
       return { ok: true, skipped: true };
     }
-    await query(
-      `INSERT INTO sessions (id, bundle_id, card_uid, module_type, node_id, start_ts, count_pass, count_cycle)
-       VALUES ($1, $2, $3, $4::module_type, $5, $6, $7, $8)
-       ON CONFLICT (bundle_id, module_type) DO UPDATE
-       SET count_pass = EXCLUDED.count_pass, count_cycle = EXCLUDED.count_cycle, node_id = EXCLUDED.node_id`,
-      [sessionId, bundleId, cardUid, node.module_type, node.id, when, pass, cycle]
-    );
+    const resolvedSessionId = await upsertOpenSessionCounts({
+      node,
+      sessionId,
+      bundleId,
+      cardUid,
+      when,
+      pass,
+      cycle,
+    });
     await query(
       `INSERT INTO count_samples (session_id, count_pass, count_cycle, current_amps, ts)
        VALUES ($1, $2, $3, $4, $5)`,
-      [sessionId, pass, cycle, currentAmps ?? null, when]
+      [resolvedSessionId, pass, cycle, currentAmps ?? null, when]
     );
+    return { ok: true, sessionId: resolvedSessionId, countPass: pass, countCycle: cycle };
   } else if (type === 'CLOSE') {
     await query(
       `INSERT INTO sessions (id, bundle_id, card_uid, module_type, node_id, start_ts, end_ts,

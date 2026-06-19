@@ -94,15 +94,18 @@ router.post('/session', deviceAuth, async (req, res) => {
     }
     const result = await ingestSession(req.node, body);
     res.json(result);
+    if (result.skipped) {
+      return;
+    }
 
     const payload = {
       nodeId: req.node.id,
       lineId: req.node.line_id,
       type: body.type,
-      sessionId: body.sessionId,
+      sessionId: result.sessionId || body.sessionId,
       cardUid: body.cardUid,
-      countPass: body.counts?.pass ?? 0,
-      countCycle: body.counts?.cycle ?? 0,
+      countPass: result.countPass ?? body.counts?.pass ?? 0,
+      countCycle: result.countCycle ?? body.counts?.cycle ?? 0,
       closeReason: body.closeReason,
     };
     broker.broadcast('session_update', payload);

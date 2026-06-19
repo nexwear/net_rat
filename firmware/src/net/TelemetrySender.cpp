@@ -129,7 +129,22 @@ bool TelemetrySender::send(const TelemetryEvent& ev) {
           }
         }
       } else {
-        ok = postJson("/v1/scan", body);
+        String resp;
+        ok = postJsonWithResponse("/v1/scan", body, resp);
+        if (ok && resp.length() > 0 && _commandQ != nullptr) {
+          JsonDocument respDoc;
+          if (deserializeJson(respDoc, resp) == DeserializationError::Ok) {
+            const char* cloudSessionId = respDoc["sessionId"] | "";
+            if (cloudSessionId[0] != '\0') {
+              Command cmd{};
+              cmd.type = CmdType::SESSION_SYNC;
+              strncpy(cmd.sessionId, cloudSessionId, sizeof(cmd.sessionId) - 1);
+              if (xQueueSend(_commandQ, &cmd, pdMS_TO_TICKS(200)) != pdTRUE) {
+                Serial.println("[NET] session sync queue full");
+              }
+            }
+          }
+        }
       }
       break;
     }
