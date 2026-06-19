@@ -18,7 +18,7 @@ struct PinMap {
   int8_t currentAdc;   // SCT013 current sensor ADC (INPUT pin 34 only)
   int8_t hall;         // A3144 hall-effect sensor  (INPUT pin 26, OUTPUT_1 pin 26)
   int8_t irCloth;      // unused (legacy OUTPUT_2 garment sensor)
-  int8_t irPress;      // OUTPUT_2 pin 27: pull-up, idle HIGH, count on LOW→HIGH
+  int8_t irPress;      // OUTPUT_2 pin 27: pull-down, idle LOW, count on rising HIGH
 
   // Shared peripherals
   int8_t  buzzer;       // passive buzzer / piezo (pin 15, all modules)

@@ -491,6 +491,10 @@ function BundleTrackModal({ bundleId, onClose }) {
           if (!payload.bundleId || payload.bundleId === bundleId) reload()
           return
         }
+        if (type === 'node_heartbeat' && payload.session?.bundleId === bundleId) {
+          reload()
+          return
+        }
         if (type === 'scan_event' && payload.bundleId === bundleId) {
           reload()
         }

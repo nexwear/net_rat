@@ -534,6 +534,23 @@ export default function DashboardTab() {
 
   const handlersRef = useRef({ fetchSnapshot, fetchStats, patchNode })
   handlersRef.current = { fetchSnapshot, fetchStats, patchNode }
+  const snapshotDebounceRef = useRef(null)
+
+  const scheduleSnapshotRefresh = useCallback(() => {
+    if (snapshotDebounceRef.current) return
+    snapshotDebounceRef.current = setTimeout(() => {
+      snapshotDebounceRef.current = null
+      handlersRef.current.fetchSnapshot()
+    }, 400)
+  }, [])
+
+  const mergeCount = (next, prev) => {
+    const n = Number(next)
+    const p = Number(prev)
+    if (!Number.isFinite(n)) return Number.isFinite(p) ? p : 0
+    if (!Number.isFinite(p)) return n
+    return Math.max(n, p)
+  }
 
   const applySessionPayload = useCallback((nodeId, payload) => {
     const { patchNode: patch } = handlersRef.current
@@ -557,8 +574,8 @@ export default function DashboardTab() {
           sessionId: payload.sessionId || base.sessionId,
           bundleId: payload.bundleId ?? base.bundleId,
           cardUid: payload.cardUid || base.cardUid,
-          countPass: payload.countPass ?? base.countPass,
-          countCycle: payload.countCycle ?? base.countCycle,
+          countPass: mergeCount(payload.countPass, base.countPass),
+          countCycle: mergeCount(payload.countCycle, base.countCycle),
           declaredPieces: payload.declaredPieces ?? base.declaredPieces,
           startTs: payload.startTs || base.startTs,
         },
@@ -582,13 +599,14 @@ export default function DashboardTab() {
               sessionId: payload.session.sessionId,
               bundleId: payload.session.bundleId,
               cardUid: payload.session.cardUid,
-              countPass: payload.session.countPass,
-              countCycle: payload.session.countCycle,
+              countPass: mergeCount(payload.session.countPass, nd.session?.countPass),
+              countCycle: mergeCount(payload.session.countCycle, nd.session?.countCycle),
               declaredPieces: payload.session.declaredPieces ?? nd.session?.declaredPieces ?? 0,
               startTs: payload.session.startTs || nd.session?.startTs,
             }
           : nd.session,
       }))
+      if (payload.session) scheduleSnapshotRefresh()
       return
     }
 
@@ -601,6 +619,7 @@ export default function DashboardTab() {
         fetchSnapshot()
         fetchStats()
       } else if (payload.type === 'UPDATE') {
+        scheduleSnapshotRefresh()
         fetchStats()
       }
       return
@@ -610,7 +629,7 @@ export default function DashboardTab() {
       fetchSnapshot()
       fetchStats()
     }
-  }, [applySessionPayload])
+  }, [applySessionPayload, scheduleSnapshotRefresh])
 
   const connectWs = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
@@ -640,12 +659,13 @@ export default function DashboardTab() {
 
     return () => {
       clearTimeout(reconnectTimer.current)
+      if (snapshotDebounceRef.current) clearTimeout(snapshotDebounceRef.current)
       wsRef.current?.close()
     }
   }, [fetchSnapshot, fetchStats, connectWs])
 
   useEffect(() => {
-    const pollMs = hasOpenSessions ? 5_000 : 30_000
+    const pollMs = hasOpenSessions ? 3_000 : 30_000
     const syncInterval  = setInterval(fetchSnapshot, pollMs)
     const statsInterval = setInterval(fetchStats, hasOpenSessions ? 15_000 : 60_000)
     return () => {

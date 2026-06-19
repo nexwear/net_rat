@@ -682,12 +682,18 @@ async function ingestSession(node, body) {
        VALUES ($1, $2, $3, $4, $5)`,
       [resolved.sessionId, resolved.countPass, resolved.countCycle, currentAmps ?? null, when]
     );
+    let declaredPieces = 0;
+    if (bundleId) {
+      const { rows: b } = await query('SELECT declared_pieces FROM bundles WHERE id = $1', [bundleId]);
+      declaredPieces = b[0]?.declared_pieces ?? 0;
+    }
     return {
       ok: true,
       sessionId: resolved.sessionId,
       countPass: resolved.countPass,
       countCycle: resolved.countCycle,
       bundleId,
+      declaredPieces,
     };
   } else if (type === 'CLOSE') {
     const closed = await closeOpenSession({

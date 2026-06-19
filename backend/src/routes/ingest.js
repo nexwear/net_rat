@@ -50,6 +50,23 @@ router.post('/heartbeat', deviceAuth, async (req, res) => {
     };
     broker.broadcast('node_heartbeat', payload);
     mqtt.publish(`factory/nodes/${req.node.id}/heartbeat`, payload);
+
+    if (active) {
+      const sessionPayload = {
+        nodeId: req.node.id,
+        lineId: req.node.line_id,
+        type: 'UPDATE',
+        sessionId: active.sessionId,
+        bundleId: active.bundleId,
+        cardUid: active.cardUid,
+        countPass: active.countPass,
+        countCycle: active.countCycle,
+        declaredPieces: active.declaredPieces,
+        startTs: active.startTs ? new Date(active.startTs).toISOString() : null,
+      };
+      broker.broadcast('session_update', sessionPayload);
+      mqtt.publish(`factory/nodes/${req.node.id}/session`, sessionPayload);
+    }
   } catch (err) {
     console.error('heartbeat error', err);
     res.status(err.status || 500).json({ error: err.message });
@@ -102,6 +119,7 @@ router.post('/scan', deviceAuth, async (req, res) => {
         cardUid: body.cardUid,
         countPass: 0,
         countCycle: 0,
+        declaredPieces: result.declaredPieces ?? 0,
       };
       broker.broadcast('session_update', sessionPayload);
       mqtt.publish(`factory/nodes/${req.node.id}/session`, sessionPayload);
@@ -143,6 +161,7 @@ router.post('/session', deviceAuth, async (req, res) => {
       cardUid: body.cardUid,
       countPass: result.countPass ?? body.counts?.pass ?? 0,
       countCycle: result.countCycle ?? body.counts?.cycle ?? 0,
+      declaredPieces: result.declaredPieces ?? null,
       closeReason: body.closeReason,
     };
     broker.broadcast('session_update', payload);
