@@ -80,6 +80,15 @@ router.post('/scan', deviceAuth, async (req, res) => {
     };
     broker.broadcast('scan_event', payload);
     mqtt.publish(`factory/nodes/${req.node.id}/scan`, payload);
+    if (result.bundleFinalized && result.bundleId) {
+      const bundlePayload = {
+        bundleId: result.bundleId,
+        nodeId: req.node.id,
+        lineId: req.node.line_id,
+      };
+      broker.broadcast('bundle_finalized', bundlePayload);
+      mqtt.publish(`factory/bundles/${result.bundleId}/finalized`, bundlePayload);
+    }
   } catch (err) {
     console.error('scan error', err);
     res.status(err.status || 500).json({ error: err.message });
@@ -110,6 +119,15 @@ router.post('/session', deviceAuth, async (req, res) => {
     };
     broker.broadcast('session_update', payload);
     mqtt.publish(`factory/nodes/${req.node.id}/session`, payload);
+    if (result.bundleFinalized && result.bundleId) {
+      const bundlePayload = {
+        bundleId: result.bundleId,
+        nodeId: req.node.id,
+        lineId: req.node.line_id,
+      };
+      broker.broadcast('bundle_finalized', bundlePayload);
+      mqtt.publish(`factory/bundles/${result.bundleId}/finalized`, bundlePayload);
+    }
   } catch (err) {
     console.error('session error', err);
     res.status(err.status || 500).json({ error: err.message });

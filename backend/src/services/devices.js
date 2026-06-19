@@ -435,10 +435,26 @@ async function ingestScan(node, body) {
     );
     if (openSame.rowCount > 0) {
       sessionId = openSame.rows[0].id;
+      const { rows: sess } = await query(
+        'SELECT count_pass FROM sessions WHERE id = $1',
+        [sessionId]
+      );
       await query(
         `UPDATE sessions SET end_ts = $2, close_reason = 'NEXT_TAP' WHERE id = $1`,
         [sessionId, when]
       );
+      if (node.module_type === 'OUTPUT_2') {
+        await reconcilePpp(bundleId, sess[0]?.count_pass ?? 0);
+      }
+      await finalizeBundle(bundleId, cardUid);
+      return assignScanResponse(cardUid, cardInfo, {
+        bundleId,
+        sessionId: null,
+        bundleFinalized: true,
+        mode: assignMeta.mode,
+        ignored: assignMeta.ignored,
+        unregistered: assignMeta.unregistered,
+      });
     } else {
       // Close any stale open sessions on this node from other bundles
       await query(
@@ -580,6 +596,36 @@ async function closeOpenSession({
   return { sessionId: resolvedId, countPass: finalPass, countCycle: finalCycle };
 }
 
+/** Release the card and remove the bundle after a station finishes its session. */
+async function finalizeBundle(bundleId, cardUid) {
+  if (!bundleId) {
+    return { released: false, deleted: false };
+  }
+
+  await query(
+    `UPDATE cards SET status = 'AVAILABLE', current_bundle_id = NULL
+     WHERE current_bundle_id = $1`,
+    [bundleId]
+  );
+  if (cardUid) {
+    await query(
+      `UPDATE cards SET status = 'AVAILABLE', current_bundle_id = NULL WHERE uid = $1`,
+      [cardUid]
+    );
+  }
+
+  await query(
+    `DELETE FROM count_samples
+      WHERE session_id IN (SELECT id FROM sessions WHERE bundle_id = $1)`,
+    [bundleId]
+  );
+  await query('DELETE FROM sessions WHERE bundle_id = $1', [bundleId]);
+  await query('UPDATE scan_events SET bundle_id = NULL WHERE bundle_id = $1', [bundleId]);
+
+  const { rowCount } = await query('DELETE FROM bundles WHERE id = $1', [bundleId]);
+  return { released: true, deleted: rowCount > 0 };
+}
+
 async function ingestSession(node, body) {
   if (node.module_type === 'ADMIN') {
     const err = new Error('ADMIN nodes do not report production sessions');
@@ -637,22 +683,18 @@ async function ingestSession(node, body) {
     );
 
     if (node.module_type === 'OUTPUT_2' && bundleId) {
-      await query("UPDATE bundles SET status = 'COMPLETED', card_uid = NULL WHERE id = $1", [
-        bundleId,
-      ]);
-      await query(
-        "UPDATE cards SET status = 'AVAILABLE', current_bundle_id = NULL WHERE uid = $1",
-        [cardUid]
-      );
-      // OUTPUT_2 is the ground truth — use it to calibrate upstream PPP.
       await reconcilePpp(bundleId, closed.countPass);
     }
+
+    const finalized = await finalizeBundle(bundleId, cardUid);
 
     return {
       ok: true,
       sessionId: closed.sessionId,
       countPass: closed.countPass,
       countCycle: closed.countCycle,
+      bundleId,
+      bundleFinalized: finalized.deleted,
     };
   }
 

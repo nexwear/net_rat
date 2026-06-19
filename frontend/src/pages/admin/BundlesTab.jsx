@@ -579,6 +579,22 @@ export default function BundlesTab() {
 
   useEffect(() => { load() }, [load])
 
+  useEffect(() => {
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    const ws = new WebSocket(`${proto}://${window.location.host}/api/ws`)
+    ws.onmessage = (event) => {
+      try {
+        const { type, payload } = JSON.parse(event.data)
+        if (type === 'bundle_finalized' && payload?.bundleId) {
+          setBundles((prev) => prev.filter((b) => b.id !== payload.bundleId))
+          setTrackBundleId((id) => (id === payload.bundleId ? null : id))
+          setAssignBundle((b) => (b?.id === payload.bundleId ? null : b))
+        }
+      } catch {}
+    }
+    return () => ws.close()
+  }, [])
+
   async function releaseCard(bundle) {
     try {
       await fetch(`${API_BASE}/v1/admin/bundles/${bundle.id}/release-card`, {
