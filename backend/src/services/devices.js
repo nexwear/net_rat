@@ -828,6 +828,17 @@ async function getActiveSessionForNode(node) {
   if (!rows[0]?.card_uid) return null;
 
   const s = rows[0];
+  const SESSION_OPEN_MAX_MS = 45 * 60 * 1000;
+  const ageMs = Date.now() - new Date(s.start_ts).getTime();
+  if (ageMs > SESSION_OPEN_MAX_MS) {
+    await query(
+      `UPDATE sessions SET end_ts = NOW(), close_reason = 'TIMEOUT'
+       WHERE id = $1 AND end_ts IS NULL`,
+      [s.id]
+    );
+    return null;
+  }
+
   let ppp = 0;
   if (node.module_type === 'INPUT' || node.module_type === 'OUTPUT_1') {
     ppp = Math.round(await lookupPpp(s.garment_model_id, s.size_code, node.module_type));

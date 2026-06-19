@@ -160,6 +160,16 @@ void tryResumeActiveSession(const DeviceConfig& cfg, QueueHandle_t commandQ) {
   cmd.ppp = doc["ppp"] | 0;
   cmd.resumeStartEpochMs = doc["startTs"] | 0ULL;
 
+  if (cmd.resumeStartEpochMs > 0) {
+    bool tsValid = false;
+    const uint64_t nowMs = epochMsNow(&tsValid);
+    if (tsValid && nowMs > cmd.resumeStartEpochMs &&
+        (nowMs - cmd.resumeStartEpochMs) > (45ULL * 60ULL * 1000ULL)) {
+      Serial.println("[NET] stale cloud session ignored — tap card to start fresh");
+      return;
+    }
+  }
+
   if (xQueueSend(commandQ, &cmd, pdMS_TO_TICKS(200)) == pdTRUE) {
     Serial.printf("[NET] resuming cloud session %s card %s pass=%lu cycle=%lu\n", sessionId,
                   cardUid, cmd.resumePass, cmd.resumeCycle);

@@ -4,9 +4,12 @@
 PressCycleDriver::PressCycleDriver(uint8_t pressPin) : _pressPin(pressPin) {}
 
 void PressCycleDriver::begin() {
-  pinMode(_pressPin, INPUT_PULLDOWN);
-  _raw = _stable = false;
+  // Beam-break / active sensor on pin 27: pull-up, idle HIGH, LOW while object blocks.
+  pinMode(_pressPin, INPUT_PULLUP);
+  const bool high = digitalRead(_pressPin) == HIGH;
+  _raw = _stable = high;
   _edgeMs = millis();
+  _lowStartMs = 0;
 }
 
 void PressCycleDriver::poll() {
@@ -23,9 +26,22 @@ void PressCycleDriver::poll() {
     nextStable = _raw;
   }
 
-  if (!_stable && nextStable) {
-    _total++;
-    Serial.printf("[PRESS] piece #%lu (pin high)\n", static_cast<unsigned long>(_total));
+  if (_stable && !nextStable) {
+    _lowStartMs = now;
+    Serial.println("[PRESS] pin LOW (object blocking)");
   }
+
+  if (!_stable && nextStable) {
+    const uint32_t lowMs = _lowStartMs > 0 ? now - _lowStartMs : 0;
+    if (lowMs >= MIN_LOW_MS) {
+      _total++;
+      Serial.printf("[PRESS] piece #%lu (pin HIGH after %lums LOW)\n",
+                    static_cast<unsigned long>(_total), static_cast<unsigned long>(lowMs));
+    } else if (_lowStartMs > 0) {
+      Serial.printf("[PRESS] ignored short LOW (%lums)\n", static_cast<unsigned long>(lowMs));
+    }
+    _lowStartMs = 0;
+  }
+
   _stable = nextStable;
 }
