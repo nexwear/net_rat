@@ -19,8 +19,8 @@ struct PinMap {
   int8_t horseshoeIr;  // horseshoe IR beam-break (INPUT pin 27, OUTPUT_1 pin 27)
   int8_t currentAdc;   // SCT013 current sensor ADC (INPUT pin 34 only)
   int8_t hall;         // A3144 hall-effect sensor  (INPUT pin 26, OUTPUT_1 pin 26)
-  int8_t irCloth;      // heat-press: garment-present sensor (OUTPUT_2 pin 26)
-  int8_t irPress;      // heat-press: press-down sensor      (OUTPUT_2 pin 27)
+  int8_t irCloth;      // unused (legacy OUTPUT_2 garment sensor)
+  int8_t irPress;      // OUTPUT_2 heat-press stroke sensor (pin 27, active-HIGH)
 
   // Shared peripherals
   int8_t  buzzer;       // passive buzzer / piezo (pin 15, all modules)
@@ -68,12 +68,7 @@ inline PinMap forModule(ModuleType type) {
       break;
 
     case ModuleType::OUTPUT_2:
-      // Heat press, two active-HIGH IR sensors:
-      //   irCloth (26) = garment present on the platen (object → HIGH)
-      //   irPress (27) = press head has come down       (press  → HIGH)
-      // PressCycleDriver counts one piece only when a press stroke completes
-      // (held ≥ dwell) WITH cloth present — empty presses don't count.
-      p.irCloth = 26;
+      // Heat press — single active-HIGH IR on pin 27 (press head down → HIGH).
       p.irPress = 27;
       break;
 

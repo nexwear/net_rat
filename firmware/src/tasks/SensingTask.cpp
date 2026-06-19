@@ -32,14 +32,13 @@ void sensingLoop(void* param) {
   }
   CurrentDriver currentDriver(static_cast<uint8_t>(pinMap.currentAdc));
   HallDriver hallDriver(static_cast<uint8_t>(pinMap.hall));
-  PressCycleDriver pressDriver(static_cast<uint8_t>(pinMap.irCloth),
-                               static_cast<uint8_t>(pinMap.irPress));
+  PressCycleDriver pressDriver(static_cast<uint8_t>(pinMap.irPress));
   InputPieceFusion fusionDriver(&currentDriver, &horseshoeDriver);
 
   if (pinMap.horseshoeIr >= 0) drivers.push_back(&horseshoeDriver);
   if (pinMap.currentAdc >= 0) drivers.push_back(&currentDriver);
   if (pinMap.hall >= 0) drivers.push_back(&hallDriver);
-  if (pinMap.irCloth >= 0 && pinMap.irPress >= 0) drivers.push_back(&pressDriver);
+  if (pinMap.irPress >= 0) drivers.push_back(&pressDriver);
   if (moduleType == ModuleType::MOD_INPUT && pinMap.horseshoeIr >= 0 && pinMap.currentAdc >= 0) {
     drivers.push_back(&fusionDriver);
   }
