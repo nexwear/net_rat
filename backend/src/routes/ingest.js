@@ -27,6 +27,7 @@ router.post('/heartbeat', deviceAuth, async (req, res) => {
     const result = await ingestHeartbeat(req.node, req.body || {});
     res.json(result);
 
+    const active = await getActiveSessionForNode(req.node);
     const payload = {
       nodeId: req.node.id,
       lineId: req.node.line_id,
@@ -35,6 +36,17 @@ router.post('/heartbeat', deviceAuth, async (req, res) => {
       uptime: req.body.uptime,
       queueDepth: req.body.queueDepth,
       lastSeenAt: new Date().toISOString(),
+      session: active
+        ? {
+            sessionId: active.sessionId,
+            bundleId: active.bundleId,
+            cardUid: active.cardUid,
+            countPass: active.countPass,
+            countCycle: active.countCycle,
+            declaredPieces: active.declaredPieces,
+            startTs: active.startTs ? new Date(active.startTs).toISOString() : null,
+          }
+        : null,
     };
     broker.broadcast('node_heartbeat', payload);
     mqtt.publish(`factory/nodes/${req.node.id}/heartbeat`, payload);
@@ -80,6 +92,20 @@ router.post('/scan', deviceAuth, async (req, res) => {
     };
     broker.broadcast('scan_event', payload);
     mqtt.publish(`factory/nodes/${req.node.id}/scan`, payload);
+    if (result.sessionId && body.kind === 'TAP_IN') {
+      const sessionPayload = {
+        nodeId: req.node.id,
+        lineId: req.node.line_id,
+        type: 'OPEN',
+        sessionId: result.sessionId,
+        bundleId: result.bundleId,
+        cardUid: body.cardUid,
+        countPass: 0,
+        countCycle: 0,
+      };
+      broker.broadcast('session_update', sessionPayload);
+      mqtt.publish(`factory/nodes/${req.node.id}/session`, sessionPayload);
+    }
     if (result.bundleCompleted && result.bundleId) {
       const bundlePayload = {
         bundleId: result.bundleId,
@@ -113,6 +139,7 @@ router.post('/session', deviceAuth, async (req, res) => {
       lineId: req.node.line_id,
       type: body.type,
       sessionId: result.sessionId || body.sessionId,
+      bundleId: result.bundleId,
       cardUid: body.cardUid,
       countPass: result.countPass ?? body.counts?.pass ?? 0,
       countCycle: result.countCycle ?? body.counts?.cycle ?? 0,

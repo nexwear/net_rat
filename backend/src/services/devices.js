@@ -512,10 +512,17 @@ async function upsertOpenSessionCounts({ node, sessionId, bundleId, cardUid, whe
            count_cycle = GREATEST(sessions.count_cycle, EXCLUDED.count_cycle),
            node_id = EXCLUDED.node_id
        WHERE sessions.end_ts IS NULL
-       RETURNING id`,
+       RETURNING id, count_pass, count_cycle`,
       [sessionId, bundleId, cardUid, node.module_type, node.id, when, pass, cycle]
     );
-    return rows[0]?.id || sessionId;
+    if (rows[0]) {
+      return {
+        sessionId: rows[0].id,
+        countPass: rows[0].count_pass ?? pass,
+        countCycle: rows[0].count_cycle ?? cycle,
+      };
+    }
+    return { sessionId, countPass: pass, countCycle: cycle };
   }
 
   const { rows } = await query(
@@ -523,11 +530,15 @@ async function upsertOpenSessionCounts({ node, sessionId, bundleId, cardUid, whe
         SET count_pass = GREATEST(count_pass, $2),
             count_cycle = GREATEST(count_cycle, $3)
       WHERE node_id = $1 AND end_ts IS NULL
-      RETURNING id`,
+      RETURNING id, count_pass, count_cycle`,
     [node.id, pass, cycle]
   );
-  if (rows[0]?.id) {
-    return rows[0].id;
+  if (rows[0]) {
+    return {
+      sessionId: rows[0].id,
+      countPass: rows[0].count_pass ?? pass,
+      countCycle: rows[0].count_cycle ?? cycle,
+    };
   }
 
   await query(
@@ -535,7 +546,7 @@ async function upsertOpenSessionCounts({ node, sessionId, bundleId, cardUid, whe
      VALUES ($1, NULL, $2, $3::module_type, $4, $5, $6, $7)`,
     [sessionId, cardUid, node.module_type, node.id, when, pass, cycle]
   );
-  return sessionId;
+  return { sessionId, countPass: pass, countCycle: cycle };
 }
 
 /** Close the open session row and never regress counts already stored in the cloud. */
@@ -657,7 +668,7 @@ async function ingestSession(node, body) {
     if (!deviceReportsSessionOpen(body)) {
       return { ok: true, skipped: true };
     }
-    const resolvedSessionId = await upsertOpenSessionCounts({
+    const resolved = await upsertOpenSessionCounts({
       node,
       sessionId,
       bundleId,
@@ -669,9 +680,15 @@ async function ingestSession(node, body) {
     await query(
       `INSERT INTO count_samples (session_id, count_pass, count_cycle, current_amps, ts)
        VALUES ($1, $2, $3, $4, $5)`,
-      [resolvedSessionId, pass, cycle, currentAmps ?? null, when]
+      [resolved.sessionId, resolved.countPass, resolved.countCycle, currentAmps ?? null, when]
     );
-    return { ok: true, sessionId: resolvedSessionId, countPass: pass, countCycle: cycle };
+    return {
+      ok: true,
+      sessionId: resolved.sessionId,
+      countPass: resolved.countPass,
+      countCycle: resolved.countCycle,
+      bundleId,
+    };
   } else if (type === 'CLOSE') {
     const closed = await closeOpenSession({
       node,
@@ -799,7 +816,7 @@ async function getActiveSessionForNode(node) {
   if (node.module_type === 'ADMIN') return null;
 
   const { rows } = await query(
-    `SELECT s.id, s.card_uid, s.count_pass, s.count_cycle, s.start_ts,
+    `SELECT s.id, s.bundle_id, s.card_uid, s.count_pass, s.count_cycle, s.start_ts,
             b.declared_pieces, b.garment_model_id, b.size_code
        FROM sessions s
        LEFT JOIN bundles b ON b.id = s.bundle_id
@@ -818,6 +835,7 @@ async function getActiveSessionForNode(node) {
 
   return {
     sessionId: s.id,
+    bundleId: s.bundle_id,
     cardUid: s.card_uid,
     countPass: s.count_pass ?? 0,
     countCycle: s.count_cycle ?? 0,

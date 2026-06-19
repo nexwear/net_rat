@@ -464,12 +464,41 @@ function BundleTrackModal({ bundleId, onClose }) {
   const [loading, setLoading] = useState(true)
   const [error, setError]   = useState('')
 
-  useEffect(() => {
-    fetch(`${API_BASE}/v1/admin/bundles/${bundleId}`, { headers: adminHeaders() })
+  const reload = useCallback(() => {
+    return fetch(`${API_BASE}/v1/admin/bundles/${bundleId}`, { headers: adminHeaders() })
       .then((r) => r.json())
-      .then((d) => { setData(d); setLoading(false) })
-      .catch((e) => { setError(e.message); setLoading(false) })
+      .then((d) => { setData(d); setError('') })
+      .catch((e) => setError(e.message))
   }, [bundleId])
+
+  useEffect(() => {
+    setLoading(true)
+    reload().finally(() => setLoading(false))
+  }, [reload])
+
+  useEffect(() => {
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    const ws = new WebSocket(`${proto}://${window.location.host}/api/ws`)
+    ws.onmessage = (event) => {
+      try {
+        const { type, payload } = JSON.parse(event.data)
+        if (!payload) return
+        if (type === 'bundle_completed' && payload.bundleId === bundleId) {
+          reload()
+          return
+        }
+        if (type === 'session_update') {
+          if (!payload.bundleId || payload.bundleId === bundleId) reload()
+          return
+        }
+        if (type === 'scan_event' && payload.bundleId === bundleId) {
+          reload()
+        }
+      } catch {}
+    }
+    const poll = setInterval(reload, 5_000)
+    return () => { ws.close(); clearInterval(poll) }
+  }, [bundleId, reload])
 
   if (loading) return (
     <div className="modal-overlay" onClick={onClose}>
@@ -590,11 +619,13 @@ export default function BundlesTab() {
             b.id === payload.bundleId ? { ...b, status: 'COMPLETED', assigned_card_uid: null, card_uid: null } : b
           )))
           setAssignBundle((b) => (b?.id === payload.bundleId ? null : b))
+        } else if (type === 'session_update' || type === 'scan_event') {
+          load()
         }
       } catch {}
     }
     return () => ws.close()
-  }, [])
+  }, [load])
 
   async function releaseCard(bundle) {
     try {

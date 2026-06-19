@@ -27,6 +27,9 @@ void sensingLoop(void* param) {
 
   std::vector<CounterDriver*> drivers;
   HorseshoeIrDriver horseshoeDriver(static_cast<uint8_t>(pinMap.horseshoeIr));
+  if (moduleType == ModuleType::OUTPUT_1 && pinMap.horseshoeIr >= 0) {
+    horseshoeDriver.setPieceCountMode(HorseshoeIrDriver::PieceCountMode::OUTPUT_STRICT);
+  }
   CurrentDriver currentDriver(static_cast<uint8_t>(pinMap.currentAdc));
   HallDriver hallDriver(static_cast<uint8_t>(pinMap.hall));
   PressCycleDriver pressDriver(static_cast<uint8_t>(pinMap.irCloth),

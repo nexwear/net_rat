@@ -494,18 +494,21 @@ export default function DashboardTab() {
   const [lastUpdate, setLastUpdate] = useState(null)
   const wsRef            = useRef(null)
   const reconnectTimer   = useRef(null)
+  const snapshotSeq      = useRef(0)
 
   const fetchSnapshot = useCallback(async () => {
+    const seq = ++snapshotSeq.current
     try {
       const res = await fetch(`${API_BASE}/v1/admin/dashboard`, { headers: adminHeaders() })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed')
+      if (seq !== snapshotSeq.current) return
       setLines(data)
       setLastUpdate(new Date())
     } catch (e) {
       console.error('dashboard snapshot error', e)
     } finally {
-      setLoading(false)
+      if (seq === snapshotSeq.current) setLoading(false)
     }
   }, [])
 
@@ -529,6 +532,86 @@ export default function DashboardTab() {
     setLastUpdate(new Date())
   }, [])
 
+  const handlersRef = useRef({ fetchSnapshot, fetchStats, patchNode })
+  handlersRef.current = { fetchSnapshot, fetchStats, patchNode }
+
+  const applySessionPayload = useCallback((nodeId, payload) => {
+    const { patchNode: patch } = handlersRef.current
+    patch(nodeId, (nd) => {
+      if (payload.type === 'CLOSE') {
+        return { ...nd, session: null }
+      }
+      const base = nd.session || {
+        sessionId: payload.sessionId,
+        bundleId: payload.bundleId,
+        cardUid: payload.cardUid,
+        startTs: payload.startTs || new Date().toISOString(),
+        declaredPieces: payload.declaredPieces ?? 0,
+        countPass: 0,
+        countCycle: 0,
+      }
+      return {
+        ...nd,
+        session: {
+          ...base,
+          sessionId: payload.sessionId || base.sessionId,
+          bundleId: payload.bundleId ?? base.bundleId,
+          cardUid: payload.cardUid || base.cardUid,
+          countPass: payload.countPass ?? base.countPass,
+          countCycle: payload.countCycle ?? base.countCycle,
+          declaredPieces: payload.declaredPieces ?? base.declaredPieces,
+          startTs: payload.startTs || base.startTs,
+        },
+      }
+    })
+  }, [])
+
+  const handleWsMessage = useCallback((type, payload) => {
+    const { fetchSnapshot, fetchStats, patchNode: patch } = handlersRef.current
+    if (!payload?.nodeId) return
+
+    if (type === 'node_heartbeat') {
+      patch(payload.nodeId, (nd) => ({
+        ...nd,
+        lastSeenAt: payload.lastSeenAt,
+        rssi: payload.rssi,
+        fwVersion: payload.fwVersion || nd.fwVersion,
+        session: payload.session
+          ? {
+              ...(nd.session || {}),
+              sessionId: payload.session.sessionId,
+              bundleId: payload.session.bundleId,
+              cardUid: payload.session.cardUid,
+              countPass: payload.session.countPass,
+              countCycle: payload.session.countCycle,
+              declaredPieces: payload.session.declaredPieces ?? nd.session?.declaredPieces ?? 0,
+              startTs: payload.session.startTs || nd.session?.startTs,
+            }
+          : nd.session,
+      }))
+      return
+    }
+
+    if (type === 'session_update') {
+      applySessionPayload(payload.nodeId, payload)
+      if (payload.type === 'CLOSE') {
+        fetchSnapshot()
+        fetchStats()
+      } else if (payload.type === 'OPEN') {
+        fetchSnapshot()
+        fetchStats()
+      } else if (payload.type === 'UPDATE') {
+        fetchStats()
+      }
+      return
+    }
+
+    if (type === 'scan_event' || type === 'bundle_completed') {
+      fetchSnapshot()
+      fetchStats()
+    }
+  }, [applySessionPayload])
+
   const connectWs = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
@@ -543,65 +626,33 @@ export default function DashboardTab() {
     ws.onmessage = (event) => {
       try {
         const { type, payload } = JSON.parse(event.data)
-        handleMessage(type, payload)
+        handleWsMessage(type, payload)
       } catch {}
     }
-  }, []) // eslint-disable-line
+  }, [handleWsMessage])
 
-  function handleMessage(type, payload) {
-    if (type === 'node_heartbeat') {
-      patchNode(payload.nodeId, (nd) => ({
-        ...nd,
-        lastSeenAt: payload.lastSeenAt,
-        rssi: payload.rssi,
-        fwVersion: payload.fwVersion || nd.fwVersion,
-      }))
-    } else if (type === 'session_update') {
-      if (payload.type === 'UPDATE') {
-        patchNode(payload.nodeId, (nd) => ({
-          ...nd,
-          session: nd.session ? {
-            ...nd.session,
-            countPass: payload.countPass,
-            countCycle: payload.countCycle,
-          } : {
-            sessionId: payload.sessionId,
-            cardUid: payload.cardUid,
-            countPass: payload.countPass,
-            countCycle: payload.countCycle,
-            declaredPieces: 0,
-          },
-        }))
-        fetchSnapshot()
-      } else if (payload.type === 'CLOSE') {
-        patchNode(payload.nodeId, (nd) => ({ ...nd, session: null }))
-        fetchSnapshot()
-        fetchStats()
-      }
-    } else if (type === 'scan_event') {
-      fetchSnapshot()
-      fetchStats()
-    } else if (type === 'bundle_completed') {
-      fetchSnapshot()
-      fetchStats()
-    }
-  }
+  const hasOpenSessions = lines.some((line) => line.nodes?.some((nd) => nd.session))
 
   useEffect(() => {
     fetchSnapshot()
     fetchStats()
     connectWs()
 
-    const syncInterval  = setInterval(fetchSnapshot, 30_000)
-    const statsInterval = setInterval(fetchStats, 60_000)
-
     return () => {
-      clearInterval(syncInterval)
-      clearInterval(statsInterval)
       clearTimeout(reconnectTimer.current)
       wsRef.current?.close()
     }
   }, [fetchSnapshot, fetchStats, connectWs])
+
+  useEffect(() => {
+    const pollMs = hasOpenSessions ? 5_000 : 30_000
+    const syncInterval  = setInterval(fetchSnapshot, pollMs)
+    const statsInterval = setInterval(fetchStats, hasOpenSessions ? 15_000 : 60_000)
+    return () => {
+      clearInterval(syncInterval)
+      clearInterval(statsInterval)
+    }
+  }, [fetchSnapshot, fetchStats, hasOpenSessions])
 
   if (loading) return <p className="loading">Loading dashboard…</p>
 
