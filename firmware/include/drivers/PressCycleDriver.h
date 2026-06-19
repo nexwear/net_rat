@@ -2,8 +2,8 @@
 
 #include "drivers/CounterDriver.h"
 
-// OUTPUT_2 — single active-HIGH IR on pin 27 (object / press present → HIGH).
-// One piece when the object comes (stable HIGH) then goes (stable LOW).
+// OUTPUT_2 — pin 27 beam-break IR (pull-up, LOW = object present).
+// One piece when object comes (stable LOW) then goes (stable HIGH).
 class PressCycleDriver : public CounterDriver {
  public:
   explicit PressCycleDriver(uint8_t pressPin);

@@ -76,7 +76,7 @@ class SessionManager {
   static constexpr uint32_t SESSION_UPDATE_MS = 10000;
   static constexpr uint32_t SESSION_TIMEOUT_MS = 45UL * 60UL * 1000UL;
   static constexpr uint32_t UNASSIGNED_EMIT_MS = 30000;
-  static constexpr uint32_t DELTA_EMIT_THRESHOLD = 5;
+  static constexpr uint32_t DELTA_EMIT_THRESHOLD = 1;
   static constexpr uint32_t QTY_GRACE_MS = 3000;
 
   // Counting / calibration

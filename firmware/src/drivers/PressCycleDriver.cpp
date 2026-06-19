@@ -1,9 +1,11 @@
 #include "drivers/PressCycleDriver.h"
+#include <Arduino.h>
 
 PressCycleDriver::PressCycleDriver(uint8_t pressPin) : _pressPin(pressPin) {}
 
 void PressCycleDriver::begin() {
-  pinMode(_pressPin, INPUT_PULLDOWN);
+  // Same beam-break wiring as horseshoe IR on pin 27: pull-up, LOW = object blocks beam.
+  pinMode(_pressPin, INPUT_PULLUP);
   _state = State::CLEAR;
   _raw = _stable = false;
   _edgeMs = millis();
@@ -11,10 +13,10 @@ void PressCycleDriver::begin() {
 
 void PressCycleDriver::poll() {
   const uint32_t now = millis();
-  const bool seen = digitalRead(_pressPin) == HIGH;
+  const bool present = digitalRead(_pressPin) == LOW;
 
-  if (seen != _raw) {
-    _raw = seen;
+  if (present != _raw) {
+    _raw = present;
     _edgeMs = now;
   }
   if ((now - _edgeMs) >= DEBOUNCE_MS) {
@@ -33,6 +35,7 @@ void PressCycleDriver::poll() {
       if (!_stable) {
         if ((now - _presentStartMs) >= MIN_PRESENT_MS) {
           _total++;
+          Serial.printf("[PRESS] piece #%lu\n", static_cast<unsigned long>(_total));
         }
         _state = State::CLEAR;
       }
