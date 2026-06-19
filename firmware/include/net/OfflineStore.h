@@ -12,6 +12,8 @@ class OfflineStore {
   bool empty() const;
   size_t depth() const { return _depth; }
   bool overflow() const { return _overflow; }
+  /** Drop queued session/scan events after reboot (RAM session is gone). */
+  void purgeStaleSessionEvents();
 
  private:
   bool validateQueueFile(size_t fileSize);

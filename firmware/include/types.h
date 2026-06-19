@@ -15,7 +15,7 @@ enum class TelemetryType : uint8_t {
   UNASSIGNED
 };
 enum class ScanKind : uint8_t { TAP_IN, TAP_OUT, AUTO_CLOSE, ASSIGN_SCAN };
-enum class CmdType : uint8_t { REPROVISION, CARD_DECLARED, ADMIN_SCAN_FEEDBACK };
+enum class CmdType : uint8_t { REPROVISION, CARD_DECLARED, ADMIN_SCAN_FEEDBACK, SESSION_RESUME };
 
 struct TelemetryEvent {
   TelemetryType type;
@@ -38,6 +38,11 @@ struct Command {
   uint32_t ppp = 0;  // pulses-per-piece for this bundle's style+size (0 = leave unchanged)
   uint32_t cardNumber = 0;
   bool newlyRegistered = false;
+  char sessionId[37] = "";
+  char cardUid[24] = "";
+  uint32_t resumePass = 0;
+  uint32_t resumeCycle = 0;
+  uint64_t resumeStartEpochMs = 0;
 };
 
 inline const char* moduleTypeToString(ModuleType t) {

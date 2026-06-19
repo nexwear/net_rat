@@ -17,6 +17,8 @@ class SessionManager {
   void tick();
   void setDeclaredPieces(uint32_t pieces);
   void setPpp(uint32_t ppp);  // pulses-per-piece pushed from server for this bundle
+  void resumeSession(const char* cardUid, const char* sessionId, uint32_t pass, uint32_t cycle,
+                     uint32_t declared, uint32_t ppp, uint64_t startEpochMs);
   bool hasOpenSession() const { return _activeCardUid[0] != '\0'; }
   const char* activeCardUid() const { return _activeCardUid; }
 
@@ -52,6 +54,7 @@ class SessionManager {
   void updateLiveCalibration();          // refine _ppp from lifters mid-session
   float liveAmps() const;
   void snapshotBaselines();
+  void adjustBaselinesForResume(uint32_t targetPass, uint32_t targetCycle);
   void openSession(const char* cardUid, ScanKind kind);
   void closeSession(CloseReason reason, ScanKind scanKind = ScanKind::AUTO_CLOSE);
   void emit(TelemetryType type, ScanKind scanKind = ScanKind::TAP_IN, CloseReason reason = CloseReason::TIMEOUT,

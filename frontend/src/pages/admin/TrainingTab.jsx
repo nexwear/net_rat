@@ -6,17 +6,12 @@ const TRAINABLE = ['INPUT', 'OUTPUT_1']
 
 const SIGNAL_UI = {
   INPUT: {
-    primaryLabel: 'Current runs',
-    pieceLabel: 'This piece (current)',
-    secondaryLabel: 'IR pieces',
-    help: 'INPUT calibration uses current run cycles (from the CT sensor) and shows IR horseshoe count alongside. Hall rotations are ignored.',
-    markUnit: 'current runs',
+    help: 'INPUT uses both current run cycles (CT) and IR horseshoe breaks. A valid piece needs both signals to increase.',
   },
   OUTPUT_1: {
     primaryLabel: 'IR pieces',
     pieceLabel: 'This piece (IR)',
-    secondaryLabel: null,
-    help: 'OUTPUT_1 calibration uses IR horseshoe beam breaks only — no hall or current sensor.',
+    help: 'OUTPUT_1 calibration uses IR horseshoe beam breaks only.',
     markUnit: 'IR breaks',
   },
 }
@@ -174,15 +169,32 @@ export default function TrainingTab() {
   const sessionOpen = !!(training?.live || live)
   const mod = selectedNode?.module_type
   const sigUi = SIGNAL_UI[mod] || {}
-  const livePrimary = training?.live?.primary ?? live?.primary ?? null
+  const isInput = mod === 'INPUT'
+  const liveCurrent = training?.live?.currentRuns ?? live?.currentRuns ?? null
   const liveIr = training?.live?.ir ?? live?.ir ?? training?.live?.pass ?? live?.pass ?? null
+  const livePrimary = training?.live?.primary ?? live?.primary ?? null
   const liveAmps = training?.live?.amps ?? live?.amps ?? null
-  const lastMarkPrimary = training
-    ? (training.marks.length ? training.marks[training.marks.length - 1].primary : training.baselineCycle)
+  const lastMarkCurrent = training
+    ? (training.marks.length
+        ? training.marks[training.marks.length - 1].current ?? training.marks[training.marks.length - 1].primary
+        : training.baselineCycle)
     : null
+  const lastMarkIr = training
+    ? (training.marks.length
+        ? training.marks[training.marks.length - 1].ir
+        : training.baselinePass)
+    : null
+  const pieceCurrent =
+    isInput && training && liveCurrent != null && lastMarkCurrent != null
+      ? Math.max(0, liveCurrent - lastMarkCurrent)
+      : null
+  const pieceIr =
+    isInput && training && liveIr != null && lastMarkIr != null
+      ? Math.max(0, liveIr - lastMarkIr)
+      : null
   const piecePrimary =
-    training && livePrimary != null && lastMarkPrimary != null
-      ? Math.max(0, livePrimary - lastMarkPrimary)
+    !isInput && training && livePrimary != null && lastMarkCurrent != null
+      ? Math.max(0, livePrimary - lastMarkCurrent)
       : null
 
   return (
@@ -272,10 +284,20 @@ export default function TrainingTab() {
             </span>
           </div>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            <Stat label={sigUi.primaryLabel || 'Live pulses'} value={livePrimary != null ? livePrimary : '—'} accent />
-            {training && <Stat label={sigUi.pieceLabel || 'This piece'} value={piecePrimary != null ? piecePrimary : '—'} accent />}
-            {mod === 'INPUT' && <Stat label={sigUi.secondaryLabel || 'IR'} value={liveIr != null ? liveIr : '—'} />}
-            {mod === 'INPUT' && <Stat label="Current" value={liveAmps != null ? `${Number(liveAmps).toFixed(2)} A` : '—'} />}
+            {isInput ? (
+              <>
+                <Stat label="Current runs" value={liveCurrent != null ? liveCurrent : '—'} accent />
+                <Stat label="IR pieces" value={liveIr != null ? liveIr : '—'} accent />
+                {training && <Stat label="This piece (current)" value={pieceCurrent != null ? pieceCurrent : '—'} />}
+                {training && <Stat label="This piece (IR)" value={pieceIr != null ? pieceIr : '—'} />}
+                <Stat label="Amps" value={liveAmps != null ? `${Number(liveAmps).toFixed(2)} A` : '—'} />
+              </>
+            ) : (
+              <>
+                <Stat label={sigUi.primaryLabel || 'Live pulses'} value={livePrimary != null ? livePrimary : '—'} accent />
+                {training && <Stat label={sigUi.pieceLabel || 'This piece'} value={piecePrimary != null ? piecePrimary : '—'} accent />}
+              </>
+            )}
           </div>
           {!sessionOpen && (
             <p className="warn-text" style={{ marginBottom: 0, marginTop: 12 }}>
@@ -299,10 +321,28 @@ export default function TrainingTab() {
         <div className="card" style={{ padding: 20 }}>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 18 }}>
             <Stat label="Pieces marked" value={training.pieceCount} />
-            <Stat label="Running PPP (median)"
+            <Stat label={isInput ? 'Running PPP — current' : 'Running PPP (median)'}
               value={training.runningPpp != null ? Math.round(training.runningPpp) : '—'} accent />
-            <Stat label="Last piece"
-              value={training.lastDelta != null ? `${training.lastDelta} ${sigUi.markUnit || 'pulses'}` : '—'} />
+            {isInput && (
+              <Stat label="Running IR / piece"
+                value={training.runningIrPerPiece != null ? training.runningIrPerPiece.toFixed(1) : '—'} accent />
+            )}
+            {isInput ? (
+              <Stat label="Last piece"
+                value={
+                  training.lastDelta != null || training.lastDeltaIr != null
+                    ? `${training.lastDelta ?? '—'} cur · ${training.lastDeltaIr ?? '—'} IR`
+                    : '—'
+                } />
+            ) : (
+              <Stat label="Last piece"
+                value={training.lastDelta != null ? `${training.lastDelta} ${sigUi.markUnit || 'pulses'}` : '—'} />
+            )}
+            {isInput && (
+              <Stat label="Valid pieces"
+                value={`${training.validPieces} / ${training.pieceCount}`}
+                badge={training.validPieces < training.pieceCount ? 'badge badge-yellow' : 'badge badge-green'} />
+            )}
           </div>
 
           {!sessionOpen && (
@@ -347,20 +387,54 @@ export default function TrainingTab() {
             <div className="table-wrap" style={{ marginTop: 18 }}>
               <table className="admin-table">
                 <thead>
-                  <tr><th>Piece</th><th>Pulses</th><th>Cumulative</th>{mod === 'INPUT' && <th>IR</th>}<th>Marked</th></tr>
+                  <tr>
+                    <th>Piece</th>
+                    {isInput ? (
+                      <>
+                        <th>Current Δ</th>
+                        <th>IR Δ</th>
+                        <th>Cum current</th>
+                        <th>Cum IR</th>
+                      </>
+                    ) : (
+                      <>
+                        <th>Pulses</th>
+                        <th>Cumulative</th>
+                      </>
+                    )}
+                    <th>Marked</th>
+                  </tr>
                 </thead>
                 <tbody>
-                  {[...training.marks].reverse().map((m) => (
+                  {[...training.marks].reverse().map((m) => {
+                    const valid = isInput
+                      ? (m.deltaCurrent > 0 && m.deltaIr > 0)
+                      : (m.delta > 0)
+                    return (
                     <tr key={m.pieceIndex}>
                       <td>#{m.pieceIndex}</td>
-                      <td className={m.delta > 0 ? '' : 'pending-op'}>
-                        {m.delta != null ? m.delta : '—'}{m.delta <= 0 ? ' (ignored)' : ''}
-                      </td>
-                      <td className="mono">{m.primary}</td>
-                      {mod === 'INPUT' && <td className="mono">{m.ir ?? '—'}</td>}
+                      {isInput ? (
+                        <>
+                          <td className={m.deltaCurrent > 0 ? '' : 'pending-op'}>
+                            {m.deltaCurrent ?? '—'}{m.deltaCurrent <= 0 ? ' (ignored)' : ''}
+                          </td>
+                          <td className={m.deltaIr > 0 ? '' : 'pending-op'}>
+                            {m.deltaIr ?? '—'}{m.deltaIr <= 0 ? ' (ignored)' : ''}
+                          </td>
+                          <td className="mono">{m.current ?? '—'}</td>
+                          <td className="mono">{m.ir ?? '—'}</td>
+                        </>
+                      ) : (
+                        <>
+                          <td className={valid ? '' : 'pending-op'}>
+                            {m.delta != null ? m.delta : '—'}{!valid ? ' (ignored)' : ''}
+                          </td>
+                          <td className="mono">{m.primary}</td>
+                        </>
+                      )}
                       <td>{m.at ? new Date(m.at).toLocaleTimeString() : '—'}</td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>

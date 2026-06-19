@@ -88,6 +88,7 @@ bool TelemetrySender::send(const TelemetryEvent& ev) {
   doc["moduleType"] = _cfg.moduleType;
   doc["ts"] = ev.tsEpochMs;
   doc["tsValid"] = ev.tsValid;
+  doc["deviceSessionOpen"] = gSessionOpen.load();
 
   String body;
   bool ok = false;

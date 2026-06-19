@@ -14,6 +14,17 @@ void copyRecordToEvent(const uint8_t* buf, TelemetryEvent& ev) {
   const size_t n = sizeof(TelemetryEvent) < kRecordBytes ? sizeof(TelemetryEvent) : kRecordBytes;
   memcpy(&ev, buf, n);
 }
+
+bool isStaleSessionEvent(const TelemetryEvent& ev) {
+  if (ev.type == TelemetryType::SESSION_UPDATE || ev.type == TelemetryType::SESSION_CLOSE) {
+    return true;
+  }
+  if (ev.type == TelemetryType::SCAN) {
+    const ScanKind kind = static_cast<ScanKind>(ev.scanKind);
+    return kind == ScanKind::TAP_IN || kind == ScanKind::TAP_OUT || kind == ScanKind::AUTO_CLOSE;
+  }
+  return false;
+}
 }  // namespace
 
 bool OfflineStore::validateQueueFile(size_t fileSize) {
@@ -105,6 +116,53 @@ bool OfflineStore::begin() {
 }
 
 bool OfflineStore::empty() const { return _depth == 0; }
+
+void OfflineStore::purgeStaleSessionEvents() {
+  if (!_ready || _depth == 0) {
+    return;
+  }
+
+  File f = LittleFS.open(kPath, FILE_READ);
+  if (!f) {
+    resetQueue();
+    return;
+  }
+
+  const size_t fileSize = f.size();
+  if (!validateQueueFile(fileSize)) {
+    f.close();
+    resetQueue();
+    return;
+  }
+
+  uint8_t buf[kRecordSize] = {};
+  size_t dropped = 0;
+  size_t kept = 0;
+  resetQueue();
+
+  for (size_t off = 0; off + kRecordSize <= fileSize; off += kRecordSize) {
+    f.seek(off);
+    if (f.read(buf, kRecordSize) != kRecordSize) {
+      break;
+    }
+    TelemetryEvent ev{};
+    copyRecordToEvent(buf, ev);
+    if (isStaleSessionEvent(ev)) {
+      dropped++;
+      continue;
+    }
+    if (!push(ev)) {
+      break;
+    }
+    kept++;
+  }
+  f.close();
+
+  if (dropped > 0) {
+    Serial.printf("[FS] purged %u stale session event(s) after reboot (kept %u)\n",
+                  static_cast<unsigned>(dropped), static_cast<unsigned>(kept));
+  }
+}
 
 bool OfflineStore::push(const TelemetryEvent& ev) {
   if (!_ready) {

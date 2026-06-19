@@ -417,6 +417,17 @@ async function ingestScan(node, body) {
 
   let sessionId;
   if (kind === 'TAP_IN' && bundleId) {
+    if (!deviceReportsSessionOpen(body)) {
+      return assignScanResponse(cardUid, cardInfo, {
+        bundleId,
+        sessionId: null,
+        mode: assignMeta.mode,
+        ignored: assignMeta.ignored,
+        unregistered: assignMeta.unregistered,
+        skippedSession: true,
+      });
+    }
+
     // Toggle: if this card already has an open session on this node, close it
     const openSame = await query(
       `SELECT id FROM sessions WHERE node_id = $1 AND bundle_id = $2 AND end_ts IS NULL LIMIT 1`,
@@ -478,6 +489,9 @@ async function ingestSession(node, body) {
   const cycle = counts?.cycle ?? 0;
 
   if (type === 'UPDATE') {
+    if (!deviceReportsSessionOpen(body)) {
+      return { ok: true, skipped: true };
+    }
     await query(
       `INSERT INTO sessions (id, bundle_id, card_uid, module_type, node_id, start_ts, count_pass, count_cycle)
        VALUES ($1, $2, $3, $4::module_type, $5, $6, $7, $8)
@@ -563,49 +577,11 @@ async function ingestUnassigned(node, body) {
   return { ok: true };
 }
 
-const SESSION_STALE_MINUTES = 45;
-
-async function closeOpenSessionsForNode(nodeId, closeReason = 'TIMEOUT', endTs = new Date()) {
-  const { rows } = await query(
-    `UPDATE sessions SET end_ts = $2, close_reason = $3::close_reason
-     WHERE node_id = $1 AND end_ts IS NULL
-     RETURNING id`,
-    [nodeId, endTs, closeReason]
-  );
-  return rows;
-}
-
-/** Close DB sessions that no longer match device state (reboot / crash / OTA). */
-async function reconcileStaleSessions(nodeId, flags) {
-  if (flags?.sessionOpen === false) {
-    const closed = await closeOpenSessionsForNode(nodeId, 'TIMEOUT');
-    if (closed.length > 0) {
-      console.log(
-        `reconcile: closed ${closed.length} phantom session(s) on ${nodeId} (heartbeat sessionOpen=false)`
-      );
-    }
-    return;
-  }
-
-  // Old firmware without sessionOpen — close open sessions with no activity past timeout.
-  if (flags?.sessionOpen !== true) {
-    const { rowCount } = await query(
-      `UPDATE sessions s SET end_ts = NOW(), close_reason = 'TIMEOUT'
-       WHERE s.node_id = $1 AND s.end_ts IS NULL
-         AND s.start_ts < NOW() - ($2::text || ' minutes')::interval
-         AND NOT EXISTS (
-           SELECT 1 FROM count_samples cs
-           WHERE cs.session_id = s.id
-             AND cs.ts > NOW() - ($2::text || ' minutes')::interval
-         )`,
-      [nodeId, String(SESSION_STALE_MINUTES)]
-    );
-    if (rowCount > 0) {
-      console.log(
-        `reconcile: closed ${rowCount} stale session(s) on ${nodeId} (>${SESSION_STALE_MINUTES}m idle)`
-      );
-    }
-  }
+/** Only explicit device telemetry may open/update sessions — not heartbeat inference. */
+function deviceReportsSessionOpen(body) {
+  if (body.deviceSessionOpen === true) return true;
+  if (body.deviceSessionOpen === false) return false;
+  return true;
 }
 
 async function ingestHeartbeat(node, body) {
@@ -631,7 +607,8 @@ async function ingestHeartbeat(node, body) {
     [node.id, rssi, uptime, fwVersion, queueDepth, flags ? JSON.stringify(flags) : null]
   );
 
-  await reconcileStaleSessions(node.id, flags);
+  const { rows: refreshed } = await query('SELECT flags FROM nodes WHERE id = $1', [node.id]);
+  node.flags = refreshed[0]?.flags || node.flags;
 
   // QUEUE_OVERFLOW alert from heartbeat overflow flag
   if (flags?.overflow) {
@@ -651,11 +628,44 @@ async function ingestHeartbeat(node, body) {
   return { ok: true, serverTimeMs: Date.now(), pendingOp };
 }
 
+async function getActiveSessionForNode(node) {
+  if (node.module_type === 'ADMIN') return null;
+
+  const { rows } = await query(
+    `SELECT s.id, s.card_uid, s.count_pass, s.count_cycle, s.start_ts,
+            b.declared_pieces, b.garment_model_id, b.size_code
+       FROM sessions s
+       LEFT JOIN bundles b ON b.id = s.bundle_id
+      WHERE s.node_id = $1 AND s.end_ts IS NULL
+      ORDER BY s.start_ts DESC
+      LIMIT 1`,
+    [node.id]
+  );
+  if (!rows[0]?.card_uid) return null;
+
+  const s = rows[0];
+  let ppp = 0;
+  if (node.module_type === 'INPUT' || node.module_type === 'OUTPUT_1') {
+    ppp = Math.round(await lookupPpp(s.garment_model_id, s.size_code, node.module_type));
+  }
+
+  return {
+    sessionId: s.id,
+    cardUid: s.card_uid,
+    countPass: s.count_pass ?? 0,
+    countCycle: s.count_cycle ?? 0,
+    declaredPieces: s.declared_pieces ?? 0,
+    ppp,
+    startTs: s.start_ts ? new Date(s.start_ts).getTime() : null,
+  };
+}
+
 module.exports = {
   findNodeByToken,
   claimDevice,
   approveDevice,
   getDeviceConfig,
+  getActiveSessionForNode,
   ingestScan,
   ingestSession,
   ingestUnassigned,

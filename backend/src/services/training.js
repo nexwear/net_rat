@@ -72,11 +72,34 @@ async function getTrainingRow(trainingId) {
 
 async function getMarks(trainingId) {
   const { rows } = await query(
-    `SELECT piece_index, count_cycle, count_pass, delta_cycle, marked_at
+    `SELECT piece_index, count_cycle, count_pass, delta_cycle, delta_pass, marked_at
        FROM ppp_training_marks WHERE training_id = $1 ORDER BY piece_index ASC`,
     [trainingId]
   );
   return rows;
+}
+
+function isValidMark(moduleType, mark) {
+  const dCurrent = mark.delta_cycle;
+  const dIr = mark.delta_pass;
+  if (moduleType === 'INPUT') {
+    return Number.isFinite(dCurrent) && dCurrent > 0 && Number.isFinite(dIr) && dIr > 0;
+  }
+  return Number.isFinite(dCurrent) && dCurrent > 0;
+}
+
+function buildMarkView(t, m) {
+  const isInput = t.module_type === 'INPUT';
+  return {
+    pieceIndex: m.piece_index,
+    current: isInput ? m.count_cycle : null,
+    ir: m.count_pass,
+    primary: m.count_cycle,
+    deltaCurrent: isInput ? m.delta_cycle : null,
+    deltaIr: m.delta_pass,
+    delta: m.delta_cycle,
+    at: m.marked_at,
+  };
 }
 
 function livePayload(live) {
@@ -95,8 +118,12 @@ function livePayload(live) {
 }
 
 function buildState(t, marks, live) {
-  const deltas = marks.map((m) => m.delta_cycle).filter((d) => Number.isFinite(d) && d > 0);
-  const lastDelta = marks.length ? marks[marks.length - 1].delta_cycle : null;
+  const validMarks = marks.filter((m) => isValidMark(t.module_type, m));
+  const currentDeltas = validMarks.map((m) => m.delta_cycle).filter((d) => Number.isFinite(d) && d > 0);
+  const irDeltas = validMarks
+    .map((m) => m.delta_pass)
+    .filter((d) => Number.isFinite(d) && d > 0);
+  const last = marks.length ? marks[marks.length - 1] : null;
   const sig = TRAINING_SIGNAL[t.module_type];
   return {
     id: t.id,
@@ -105,20 +132,17 @@ function buildState(t, marks, live) {
     garmentModelId: t.garment_model_id,
     sizeCode: t.size_code,
     baselineCycle: t.baseline_cycle,
+    baselinePass: t.baseline_pass ?? 0,
     status: t.status,
     pieceCount: t.piece_count,
-    validPieces: deltas.length,
-    runningPpp: median(deltas),
+    validPieces: validMarks.length,
+    runningPpp: median(currentDeltas),
+    runningIrPerPiece: t.module_type === 'INPUT' ? median(irDeltas) : null,
     resultPpp: t.result_ppp,
-    lastDelta,
+    lastDelta: last?.delta_cycle ?? null,
+    lastDeltaIr: last?.delta_pass ?? null,
     signalLabel: sig?.label ?? 'pulses',
-    marks: marks.map((m) => ({
-      pieceIndex: m.piece_index,
-      primary: m.count_cycle,
-      ir: m.count_pass,
-      delta: m.delta_cycle,
-      at: m.marked_at,
-    })),
+    marks: marks.map((m) => buildMarkView(t, m)),
     live: livePayload(live),
   };
 }
@@ -139,13 +163,16 @@ async function startTraining({ nodeId, garmentModelId, sizeCode }) {
   );
 
   const live = await getNodeLiveSignals(nodeId, node.module_type);
-  const baseline = live?.primary ?? 0;
+  const baselineCurrent =
+    node.module_type === 'INPUT' ? (live?.currentRuns ?? 0) : (live?.primary ?? 0);
+  const baselineIr = live?.ir ?? 0;
 
   const { rows } = await query(
-    `INSERT INTO ppp_training (node_id, module_type, garment_model_id, size_code, baseline_cycle)
-     VALUES ($1, $2::module_type, $3, $4, $5)
+    `INSERT INTO ppp_training
+       (node_id, module_type, garment_model_id, size_code, baseline_cycle, baseline_pass)
+     VALUES ($1, $2::module_type, $3, $4, $5, $6)
      RETURNING *`,
-    [nodeId, node.module_type, garmentModelId || 0, sizeCode || 0, baseline]
+    [nodeId, node.module_type, garmentModelId || 0, sizeCode || 0, baselineCurrent, baselineIr]
   );
   return buildState(rows[0], [], live);
 }
@@ -163,18 +190,25 @@ async function markPiece(trainingId) {
   }
 
   const { rows: last } = await query(
-    `SELECT count_cycle FROM ppp_training_marks
+    `SELECT count_cycle, count_pass FROM ppp_training_marks
       WHERE training_id = $1 ORDER BY piece_index DESC LIMIT 1`,
     [trainingId]
   );
-  const prevPrimary = last[0]?.count_cycle ?? t.baseline_cycle;
-  const delta = live.primary - prevPrimary;
+
+  const isInput = t.module_type === 'INPUT';
+  const currentVal = isInput ? (live.currentRuns ?? 0) : live.primary;
+  const irVal = live.ir ?? 0;
+  const prevCurrent = last[0]?.count_cycle ?? t.baseline_cycle;
+  const prevIr = last[0]?.count_pass ?? (t.baseline_pass ?? 0);
+  const deltaCurrent = currentVal - prevCurrent;
+  const deltaIr = irVal - prevIr;
   const pieceIndex = t.piece_count + 1;
 
   await query(
-    `INSERT INTO ppp_training_marks (training_id, piece_index, count_cycle, count_pass, delta_cycle)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [trainingId, pieceIndex, live.primary, live.ir, delta]
+    `INSERT INTO ppp_training_marks
+       (training_id, piece_index, count_cycle, count_pass, delta_cycle, delta_pass)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [trainingId, pieceIndex, currentVal, irVal, deltaCurrent, deltaIr]
   );
   await query('UPDATE ppp_training SET piece_count = $2 WHERE id = $1', [trainingId, pieceIndex]);
 
@@ -208,12 +242,13 @@ async function finishTraining(trainingId, save) {
   if (t.status !== 'ACTIVE') throw badRequest('training run already finished');
 
   const marks = await getMarks(trainingId);
-  const deltas = marks.map((m) => m.delta_cycle).filter((d) => Number.isFinite(d) && d > 0);
-  const ppp = median(deltas);
+  const validMarks = marks.filter((m) => isValidMark(t.module_type, m));
+  const currentDeltas = validMarks.map((m) => m.delta_cycle);
+  const ppp = median(currentDeltas);
   const willSave = !!(save && ppp && ppp > 0);
 
   if (willSave) {
-    const sampleCount = Math.min(deltas.length, 50);
+    const sampleCount = Math.min(currentDeltas.length, 50);
     await query(
       `INSERT INTO ppp_calibration
          (garment_model_id, size_code, module_type, pulses_per_piece, sample_count, updated_at)
@@ -237,7 +272,7 @@ async function finishTraining(trainingId, save) {
   return {
     saved: willSave,
     resultPpp: willSave ? ppp : null,
-    validPieces: deltas.length,
+    validPieces: validMarks.length,
     training: buildState(t2, marks, null),
   };
 }

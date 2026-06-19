@@ -358,6 +358,11 @@ function NodeTile({ node }) {
 
       {node.session ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {health === 'offline' && (
+            <span className="badge badge-yellow" style={{ alignSelf: 'flex-start', fontSize: 10 }}>
+              Offline · session open
+            </span>
+          )}
           <div style={{ fontSize: 11, color: 'var(--text-3)', display: 'flex', gap: 5, alignItems: 'center' }}>
             <span>Card</span>
             <span style={{ fontFamily: 'var(--mono)', color: 'var(--text-2)', fontWeight: 600 }}>

@@ -104,6 +104,74 @@ void SessionManager::snapshotBaselines() {
   }
 }
 
+void SessionManager::adjustBaselinesForResume(uint32_t targetPass, uint32_t targetCycle) {
+  const ModuleType mt = moduleTypeFromString(_cfg.moduleType);
+  for (auto* d : _drivers) {
+    if (!d) continue;
+    const uint8_t idx = static_cast<uint8_t>(d->id());
+    const uint32_t total = d->total();
+    _baseline[idx].used = true;
+    if (mt == ModuleType::OUTPUT_2 && d->id() == DriverId::PRESS) {
+      _baseline[idx].value = total >= targetPass ? total - targetPass : 0;
+    } else if (mt != ModuleType::OUTPUT_2 && d->id() == DriverId::HALL) {
+      _baseline[idx].value = total >= targetCycle ? total - targetCycle : 0;
+    } else if (mt != ModuleType::OUTPUT_2 && d->id() == DriverId::HORSESHOE) {
+      _baseline[idx].value = total >= targetPass ? total - targetPass : 0;
+    } else {
+      _baseline[idx].value = total;
+    }
+  }
+}
+
+void SessionManager::resumeSession(const char* cardUid, const char* sessionId, uint32_t pass,
+                                   uint32_t cycle, uint32_t declared, uint32_t ppp,
+                                   uint64_t startEpochMs) {
+  if (hasOpenSession()) {
+    return;
+  }
+  if (moduleTypeFromString(_cfg.moduleType) == ModuleType::ADMIN) {
+    return;
+  }
+  if (!cardUid || !cardUid[0] || !sessionId || !sessionId[0]) {
+    return;
+  }
+
+  strncpy(_activeCardUid, cardUid, sizeof(_activeCardUid) - 1);
+  _activeCardUid[sizeof(_activeCardUid) - 1] = '\0';
+  strncpy(_sessionId, sessionId, sizeof(_sessionId) - 1);
+  _sessionId[sizeof(_sessionId) - 1] = '\0';
+
+  _startMs = millis();
+  if (startEpochMs > 0) {
+    bool tsValid = false;
+    const uint64_t nowMs = epochMsNow(&tsValid);
+    if (tsValid && nowMs > startEpochMs) {
+      const uint64_t elapsed = nowMs - startEpochMs;
+      if (elapsed < SESSION_TIMEOUT_MS) {
+        _startMs = millis() - static_cast<uint32_t>(elapsed);
+      }
+    }
+  }
+  _lastEmitMs = _startMs;
+  _cachedDeclared = declared;
+  _qtyReachedMs = 0;
+  if (ppp > 0) {
+    setPpp(ppp);
+  }
+
+  snapshotBaselines();
+  adjustBaselinesForResume(pass, cycle);
+  _lastReportedPass = passCount();
+  _lastReportedCycle = cycleCount();
+  gSessionOpen.store(true);
+
+  emit(TelemetryType::SESSION_UPDATE);
+  _lastEmitMs = millis();
+  Serial.printf("[SESSION] resumed uid=%s session=%s pass=%lu cycle=%lu\n", _activeCardUid,
+                _sessionId, passCount(), cycleCount());
+  Serial.println("[SESSION] tap-out: remove card, then tap same card again");
+}
+
 void SessionManager::emit(TelemetryType type, ScanKind scanKind, CloseReason reason,
                           const char* cardUidOverride) {
   TelemetryEvent ev{};

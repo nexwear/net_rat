@@ -264,6 +264,7 @@ CREATE TABLE IF NOT EXISTS ppp_training (
   garment_model_id INT NOT NULL DEFAULT 0,
   size_code        INT NOT NULL DEFAULT 0,
   baseline_cycle   INT NOT NULL DEFAULT 0,
+  baseline_pass    INT NOT NULL DEFAULT 0,
   status           TEXT NOT NULL DEFAULT 'ACTIVE',   -- ACTIVE | SAVED | CANCELLED
   result_ppp       REAL,
   piece_count      INT NOT NULL DEFAULT 0,
@@ -278,6 +279,7 @@ CREATE TABLE IF NOT EXISTS ppp_training_marks (
   count_cycle  INT NOT NULL,
   count_pass   INT,
   delta_cycle  INT,
+  delta_pass   INT,
   marked_at    TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -287,6 +289,13 @@ CREATE INDEX IF NOT EXISTS ppp_training_active ON ppp_training(node_id) WHERE st
 
 async function initDb() {
   await pool.query(SCHEMA);
+
+  await pool.query(
+    'ALTER TABLE ppp_training ADD COLUMN IF NOT EXISTS baseline_pass INT NOT NULL DEFAULT 0'
+  );
+  await pool.query(
+    'ALTER TABLE ppp_training_marks ADD COLUMN IF NOT EXISTS delta_pass INT'
+  );
 
   const factory = await pool.query('SELECT id FROM factories LIMIT 1');
   if (factory.rowCount === 0) {

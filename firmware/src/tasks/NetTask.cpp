@@ -108,11 +108,70 @@ void fetchCardDeclared(const DeviceConfig& cfg, QueueHandle_t commandQ, const ch
   xQueueSend(commandQ, &cmd, 0);
 }
 
+void tryResumeActiveSession(const DeviceConfig& cfg, QueueHandle_t commandQ) {
+  if (cfg.moduleType == "ADMIN" || gSessionOpen.load()) {
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  const String url = cfg.serverUrl + "/v1/session/active";
+  HTTPClient http;
+  WiFiClient client;
+  if (!http.begin(client, url)) {
+    return;
+  }
+
+  http.setConnectTimeout(5000);
+  http.setTimeout(5000);
+  http.addHeader("X-Node-Token", cfg.token);
+  const int code = http.GET();
+  const String body = http.getString();
+  http.end();
+
+  if (code != 200) {
+    if (code != 404) {
+      Serial.printf("[NET] session resume lookup HTTP %d\n", code);
+    }
+    return;
+  }
+
+  JsonDocument doc;
+  if (deserializeJson(doc, body) != DeserializationError::Ok || !(doc["active"] | false)) {
+    return;
+  }
+
+  const char* cardUid = doc["cardUid"] | "";
+  const char* sessionId = doc["sessionId"] | "";
+  if (cardUid[0] == '\0' || sessionId[0] == '\0') {
+    return;
+  }
+
+  Command cmd{};
+  cmd.type = CmdType::SESSION_RESUME;
+  strncpy(cmd.cardUid, cardUid, sizeof(cmd.cardUid) - 1);
+  strncpy(cmd.sessionId, sessionId, sizeof(cmd.sessionId) - 1);
+  cmd.resumePass = doc["countPass"] | 0;
+  cmd.resumeCycle = doc["countCycle"] | 0;
+  cmd.declaredPieces = doc["declaredPieces"] | 0;
+  cmd.ppp = doc["ppp"] | 0;
+  cmd.resumeStartEpochMs = doc["startTs"] | 0ULL;
+
+  if (xQueueSend(commandQ, &cmd, pdMS_TO_TICKS(200)) == pdTRUE) {
+    Serial.printf("[NET] resuming cloud session %s card %s pass=%lu cycle=%lu\n", sessionId,
+                  cardUid, cmd.resumePass, cmd.resumeCycle);
+  } else {
+    Serial.println("[NET] session resume command queue full");
+  }
+}
+
 void netLoop(void* param) {
   auto* ctx = static_cast<NetContext*>(param);
   WiFiManagerTask wifi(ctx->cfg);
   OfflineStore store;
   store.begin();
+  store.purgeStaleSessionEvents();
   TelemetrySender sender(ctx->cfg, store, ctx->commandQ);
   OtaMgr ota(ctx->cfg, store);
 
@@ -140,6 +199,8 @@ void netLoop(void* param) {
   uint32_t lastHeartbeatMs = 0;
   uint32_t lastTimeSyncMs = millis();
   uint32_t bootMs = millis();
+  bool bootSyncDone = false;
+  bool sessionResumeDone = false;
   for (;;) {
     esp_task_wdt_reset();
     wifi.loop();
@@ -175,8 +236,35 @@ void netLoop(void* param) {
       }
     }
 
+    const uint32_t now = millis();
+
+    // Boot heartbeat, then pull any open cloud session into RAM (reboot recovery).
+    if (wifi.isConnected() && !bootSyncDone) {
+      const size_t depth = uxQueueMessagesWaiting(ctx->telemetryQ) + store.depth();
+      uint32_t flags = store.overflow() ? 1 : 0;
+      String hbResp;
+      sender.sendHeartbeat(WiFi.RSSI(), now / 1000, depth, flags, &hbResp);
+      lastHeartbeatMs = now;
+      bootSyncDone = true;
+      Serial.println("[NET] boot heartbeat sent");
+
+      if (hbResp.length() > 0) {
+        JsonDocument hbDoc;
+        if (deserializeJson(hbDoc, hbResp) == DeserializationError::Ok) {
+          if (!hbDoc["pendingOp"].isNull() && hbDoc["pendingOp"].is<JsonObject>()) {
+            RemoteConfig::apply(hbDoc["pendingOp"].as<JsonObjectConst>());
+          }
+        }
+      }
+
+      if (!sessionResumeDone) {
+        tryResumeActiveSession(ctx->cfg, ctx->commandQ);
+        sessionResumeDone = true;
+      }
+    }
+
     uint8_t drainBudget = 4;
-    if (!store.empty() && wifi.isConnected() && (millis() - bootMs) >= 5000) {
+    if (!store.empty() && wifi.isConnected() && bootSyncDone && (now - bootMs) >= 2000) {
       while (drainBudget > 0) {
         TelemetryEvent queued{};
         if (!store.pop(queued)) {
@@ -194,7 +282,6 @@ void netLoop(void* param) {
       }
     }
 
-    const uint32_t now = millis();
     if ((now - lastHeartbeatMs) >= 15000) {
       const size_t depth = uxQueueMessagesWaiting(ctx->telemetryQ) + store.depth();
       uint32_t flags = store.overflow() ? 1 : 0;

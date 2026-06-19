@@ -34,6 +34,7 @@ void HorseshoeIrDriver::poll() {
       if (!raw && (now - _stateMs) >= DEBOUNCE_MS) {
         _state = State::BLOCKED;
         _stateMs = now;
+        _cycleStartMs = now;
       }
       break;
     case State::BLOCKED:
@@ -45,7 +46,9 @@ void HorseshoeIrDriver::poll() {
       break;
     case State::CONFIRMED:
       if (raw && (now - _stateMs) >= DEBOUNCE_MS) {
-        registerBreak();
+        if ((now - _cycleStartMs) >= MIN_PIECE_MS) {
+          registerBreak();
+        }
         _state = State::IDLE;
         _stateMs = now;
       }

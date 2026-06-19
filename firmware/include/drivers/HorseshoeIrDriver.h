@@ -25,12 +25,15 @@ class HorseshoeIrDriver : public CounterDriver {
   uint32_t _groups = 0;
   uint32_t _rawBreaks = 0;
   uint32_t _lastBreakMs = 0;
+  uint32_t _cycleStartMs = 0;
   State _state = State::IDLE;
   uint32_t _stateMs = 0;
   bool _lastRaw = true;
 
   static constexpr uint32_t DEBOUNCE_MS = 30;
   static constexpr uint32_t MIN_BLOCK_MS = 150;
+  // Full block→clear cycles shorter than this are a quick lift/bump — not a piece.
+  static constexpr uint32_t MIN_PIECE_MS = 1000;
   // Breaks within this window of each other count as a single piece.
   static constexpr uint32_t GROUP_GAP_MS = 1200;
 };

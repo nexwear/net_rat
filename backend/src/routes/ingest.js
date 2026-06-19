@@ -1,6 +1,12 @@
 const express = require('express');
-const { findNodeByToken, ingestScan, ingestSession, ingestUnassigned, ingestHeartbeat } =
-  require('../services/devices');
+const {
+  findNodeByToken,
+  ingestScan,
+  ingestSession,
+  ingestUnassigned,
+  ingestHeartbeat,
+  getActiveSessionForNode,
+} = require('../services/devices');
 const broker = require('../services/broker');
 const mqtt = require('../services/mqttClient');
 
@@ -34,6 +40,20 @@ router.post('/heartbeat', deviceAuth, async (req, res) => {
     mqtt.publish(`factory/nodes/${req.node.id}/heartbeat`, payload);
   } catch (err) {
     console.error('heartbeat error', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+/** Open production session on this node (for ESP resume after reboot). */
+router.get('/session/active', deviceAuth, async (req, res) => {
+  try {
+    const session = await getActiveSessionForNode(req.node);
+    if (!session) {
+      return res.json({ active: false });
+    }
+    res.json({ active: true, ...session });
+  } catch (err) {
+    console.error('session/active error', err);
     res.status(err.status || 500).json({ error: err.message });
   }
 });
