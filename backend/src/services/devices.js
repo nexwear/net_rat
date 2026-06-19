@@ -505,6 +505,81 @@ async function upsertOpenSessionCounts({ node, sessionId, bundleId, cardUid, whe
   return sessionId;
 }
 
+/** Close the open session row and never regress counts already stored in the cloud. */
+async function closeOpenSession({
+  node,
+  sessionId,
+  bundleId,
+  cardUid,
+  when,
+  pass,
+  cycle,
+  closeReason,
+}) {
+  let existing = null;
+
+  if (bundleId) {
+    const { rows } = await query(
+      `SELECT id, count_pass, count_cycle, end_ts
+         FROM sessions
+        WHERE bundle_id = $1 AND module_type = $2::module_type`,
+      [bundleId, node.module_type]
+    );
+    existing = rows[0] || null;
+  }
+
+  if (!existing) {
+    const { rows } = await query(
+      `SELECT id, count_pass, count_cycle, end_ts
+         FROM sessions
+        WHERE node_id = $1 AND module_type = $2::module_type AND end_ts IS NULL
+        ORDER BY start_ts DESC
+        LIMIT 1`,
+      [node.id, node.module_type]
+    );
+    existing = rows[0] || null;
+  }
+
+  const finalPass = Math.max(pass, existing?.count_pass ?? 0);
+  const finalCycle = Math.max(cycle, existing?.count_cycle ?? 0);
+  const resolvedId = existing?.id || sessionId;
+  const endTs = existing?.end_ts || when;
+  const reason = closeReason || 'TIMEOUT';
+
+  if (existing) {
+    await query(
+      `UPDATE sessions
+          SET end_ts = $2,
+              count_pass = $3,
+              count_cycle = $4,
+              close_reason = $5::close_reason,
+              node_id = $6,
+              card_uid = COALESCE($7, card_uid)
+        WHERE id = $1`,
+      [resolvedId, endTs, finalPass, finalCycle, reason, node.id, cardUid || null]
+    );
+  } else {
+    await query(
+      `INSERT INTO sessions (id, bundle_id, card_uid, module_type, node_id, start_ts, end_ts,
+                             count_pass, count_cycle, close_reason)
+       VALUES ($1, $2, $3, $4::module_type, $5, $6, $6, $7, $8, $9::close_reason)`,
+      [
+        resolvedId,
+        bundleId,
+        cardUid,
+        node.module_type,
+        node.id,
+        when,
+        finalPass,
+        finalCycle,
+        reason,
+      ]
+    );
+  }
+
+  return { sessionId: resolvedId, countPass: finalPass, countCycle: finalCycle };
+}
+
 async function ingestSession(node, body) {
   if (node.module_type === 'ADMIN') {
     const err = new Error('ADMIN nodes do not report production sessions');
@@ -540,28 +615,24 @@ async function ingestSession(node, body) {
     );
     return { ok: true, sessionId: resolvedSessionId, countPass: pass, countCycle: cycle };
   } else if (type === 'CLOSE') {
-    await query(
-      `INSERT INTO sessions (id, bundle_id, card_uid, module_type, node_id, start_ts, end_ts,
-                             count_pass, count_cycle, close_reason)
-       VALUES ($1, $2, $3, $4::module_type, $5, $6, $6, $7, $8, $9::close_reason)
-       ON CONFLICT (bundle_id, module_type) DO UPDATE
-       SET end_ts = EXCLUDED.end_ts, count_pass = EXCLUDED.count_pass,
-           count_cycle = EXCLUDED.count_cycle, close_reason = EXCLUDED.close_reason`,
-      [
-        sessionId,
-        bundleId,
-        cardUid,
-        node.module_type,
-        node.id,
-        when,
-        pass,
-        cycle,
-        closeReason || 'TIMEOUT',
-      ]
-    );
+    const closed = await closeOpenSession({
+      node,
+      sessionId,
+      bundleId,
+      cardUid,
+      when,
+      pass,
+      cycle,
+      closeReason,
+    });
 
     await runYieldChecks(
-      { count_pass: pass, count_cycle: cycle, node_id: node.id, module_type: node.module_type },
+      {
+        count_pass: closed.countPass,
+        count_cycle: closed.countCycle,
+        node_id: node.id,
+        module_type: node.module_type,
+      },
       bundleId
     );
 
@@ -574,8 +645,15 @@ async function ingestSession(node, body) {
         [cardUid]
       );
       // OUTPUT_2 is the ground truth — use it to calibrate upstream PPP.
-      await reconcilePpp(bundleId, pass);
+      await reconcilePpp(bundleId, closed.countPass);
     }
+
+    return {
+      ok: true,
+      sessionId: closed.sessionId,
+      countPass: closed.countPass,
+      countCycle: closed.countCycle,
+    };
   }
 
   return { ok: true };

@@ -575,6 +575,7 @@ export default function DashboardTab() {
         fetchSnapshot()
       } else if (payload.type === 'CLOSE') {
         patchNode(payload.nodeId, (nd) => ({ ...nd, session: null }))
+        fetchSnapshot()
         fetchStats()
       }
     } else if (type === 'scan_event') {
