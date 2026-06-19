@@ -1,17 +1,15 @@
 // Supervised PPP (pulses-per-piece) training.
 //
-// A super-admin runs a calibration against a single rotary station (INPUT /
-// OUTPUT_1) while an operator sews. The operator taps their card to open a
-// normal session — the node already streams cumulative count_cycle (raw motor
-// rotations) on every change. Each time the operator finishes a garment the
-// super-admin taps "piece completed"; we snapshot the live count_cycle and the
-// delta from the previous mark is that piece's rotation cost. The robust median
-// of those deltas is the calibrated pulses-per-piece, which seeds
-// ppp_calibration — the same table OUTPUT_2 ground-truth reconciliation refines.
+// INPUT:     current run cycles (from streamed amps) + IR horseshoe (count_pass)
+// OUTPUT_1:  IR horseshoe (count_pass) only
+// Hall rotations (count_cycle) are not used — firmware unchanged; signals derived here.
 const { query } = require('../db');
+const {
+  TRAINING_SIGNAL,
+  enrichLiveSignals,
+  sessionPrimaryPulseCount,
+} = require('./trainingSignals');
 
-// Only rotary stations have a count_cycle to learn from. OUTPUT_2 (heat press)
-// counts pieces directly and has no rotation signal.
 const CYCLE_MODULES = ['INPUT', 'OUTPUT_1'];
 
 function median(nums) {
@@ -40,8 +38,7 @@ async function getNode(nodeId) {
   return rows[0] || null;
 }
 
-// Latest open session on a node → its live cumulative counts + latest amps.
-async function getNodeLiveCycle(nodeId) {
+async function getOpenSessionBase(nodeId) {
   const { rows } = await query(
     `SELECT s.id AS session_id, s.card_uid, s.count_cycle, s.count_pass, s.start_ts,
             (SELECT cs.current_amps FROM count_samples cs
@@ -63,6 +60,11 @@ async function getNodeLiveCycle(nodeId) {
   };
 }
 
+async function getNodeLiveSignals(nodeId, moduleType) {
+  const base = await getOpenSessionBase(nodeId);
+  return enrichLiveSignals(moduleType, base);
+}
+
 async function getTrainingRow(trainingId) {
   const { rows } = await query('SELECT * FROM ppp_training WHERE id = $1', [trainingId]);
   return rows[0] || null;
@@ -77,9 +79,25 @@ async function getMarks(trainingId) {
   return rows;
 }
 
+function livePayload(live) {
+  if (!live) return null;
+  return {
+    sessionId: live.sessionId,
+    cardUid: live.cardUid,
+    cycle: live.cycle,
+    pass: live.pass,
+    ir: live.ir,
+    currentRuns: live.currentRuns,
+    primary: live.primary,
+    amps: live.amps ?? null,
+    signal: live.signal,
+  };
+}
+
 function buildState(t, marks, live) {
   const deltas = marks.map((m) => m.delta_cycle).filter((d) => Number.isFinite(d) && d > 0);
   const lastDelta = marks.length ? marks[marks.length - 1].delta_cycle : null;
+  const sig = TRAINING_SIGNAL[t.module_type];
   return {
     id: t.id,
     nodeId: t.node_id,
@@ -93,15 +111,15 @@ function buildState(t, marks, live) {
     runningPpp: median(deltas),
     resultPpp: t.result_ppp,
     lastDelta,
+    signalLabel: sig?.label ?? 'pulses',
     marks: marks.map((m) => ({
       pieceIndex: m.piece_index,
-      cycle: m.count_cycle,
+      primary: m.count_cycle,
+      ir: m.count_pass,
       delta: m.delta_cycle,
       at: m.marked_at,
     })),
-    live: live
-      ? { sessionId: live.sessionId, cardUid: live.cardUid, cycle: live.cycle, pass: live.pass, amps: live.amps ?? null }
-      : null,
+    live: livePayload(live),
   };
 }
 
@@ -114,15 +132,14 @@ async function startTraining({ nodeId, garmentModelId, sizeCode }) {
     );
   }
 
-  // Replace any prior active run on this node.
   await query(
     `UPDATE ppp_training SET status = 'CANCELLED', ended_at = NOW()
       WHERE node_id = $1 AND status = 'ACTIVE'`,
     [nodeId]
   );
 
-  const live = await getNodeLiveCycle(nodeId);
-  const baseline = live?.cycle ?? 0;
+  const live = await getNodeLiveSignals(nodeId, node.module_type);
+  const baseline = live?.primary ?? 0;
 
   const { rows } = await query(
     `INSERT INTO ppp_training (node_id, module_type, garment_model_id, size_code, baseline_cycle)
@@ -138,7 +155,7 @@ async function markPiece(trainingId) {
   if (!t) throw notFound('training run not found');
   if (t.status !== 'ACTIVE') throw badRequest('training run is not active');
 
-  const live = await getNodeLiveCycle(t.node_id);
+  const live = await getNodeLiveSignals(t.node_id, t.module_type);
   if (!live) {
     const e = new Error('no open session on the node — tap the operator card to start one');
     e.status = 409;
@@ -150,14 +167,14 @@ async function markPiece(trainingId) {
       WHERE training_id = $1 ORDER BY piece_index DESC LIMIT 1`,
     [trainingId]
   );
-  const prevCycle = last[0]?.count_cycle ?? t.baseline_cycle;
-  const delta = live.cycle - prevCycle;
+  const prevPrimary = last[0]?.count_cycle ?? t.baseline_cycle;
+  const delta = live.primary - prevPrimary;
   const pieceIndex = t.piece_count + 1;
 
   await query(
     `INSERT INTO ppp_training_marks (training_id, piece_index, count_cycle, count_pass, delta_cycle)
      VALUES ($1, $2, $3, $4, $5)`,
-    [trainingId, pieceIndex, live.cycle, live.pass, delta]
+    [trainingId, pieceIndex, live.primary, live.ir, delta]
   );
   await query('UPDATE ppp_training SET piece_count = $2 WHERE id = $1', [trainingId, pieceIndex]);
 
@@ -180,7 +197,7 @@ async function undoMark(trainingId) {
   const newCount = Math.max(0, t.piece_count - (rows.length ? 1 : 0));
   await query('UPDATE ppp_training SET piece_count = $2 WHERE id = $1', [trainingId, newCount]);
 
-  const live = await getNodeLiveCycle(t.node_id);
+  const live = await getNodeLiveSignals(t.node_id, t.module_type);
   const marks = await getMarks(trainingId);
   return buildState({ ...t, piece_count: newCount }, marks, live);
 }
@@ -228,16 +245,15 @@ async function finishTraining(trainingId, save) {
 async function getTrainingState(trainingId) {
   const t = await getTrainingRow(trainingId);
   if (!t) throw notFound('training run not found');
-  const live = await getNodeLiveCycle(t.node_id);
+  const live = await getNodeLiveSignals(t.node_id, t.module_type);
   const marks = await getMarks(trainingId);
   return buildState(t, marks, live);
 }
 
-// Live snapshot for a node: current open-session counts + any active run.
 async function getLiveForNode(nodeId) {
   const node = await getNode(nodeId);
   if (!node) throw notFound('node not found');
-  const live = await getNodeLiveCycle(nodeId);
+  const live = await getNodeLiveSignals(nodeId, node.module_type);
   const { rows } = await query(
     `SELECT * FROM ppp_training WHERE node_id = $1 AND status = 'ACTIVE'
       ORDER BY started_at DESC LIMIT 1`,
@@ -250,55 +266,87 @@ async function getLiveForNode(nodeId) {
   return {
     nodeId,
     moduleType: node.module_type,
-    live: live ? { sessionId: live.sessionId, cardUid: live.cardUid, cycle: live.cycle, pass: live.pass, amps: live.amps ?? null } : null,
+    live: livePayload(live),
     training,
   };
 }
 
-// Batch calibration: consume ALL historical bundles at once and derive PPP from
-// the rotation↔true-piece relation. For every bundle with a ground-truth piece
-// count (OUTPUT_2 count_pass, or declared_pieces when includeDeclared), each
-// upstream station contributes one sample = count_cycle / true_count. We take
-// the median per (garment, size, station) — robust to outliers, and uses the
-// whole dataset rather than the per-bundle rolling mean reconcilePpp applies
-// going forward. With apply=false it's a dry run (preview only).
 async function recalibrateFromHistory({ apply = false, includeDeclared = false } = {}) {
-  const { rows } = await query(
+  const { rows: truthRows } = await query(
     `
-    WITH truth AS (
-      SELECT b.id AS bundle_id, b.garment_model_id, b.size_code,
-             COALESCE(o2.true_count,
-                      CASE WHEN $1 THEN b.declared_pieces END) AS true_count
+    SELECT b.id AS bundle_id, b.garment_model_id, b.size_code,
+           COALESCE(o2.true_count,
+                    CASE WHEN $1 THEN b.declared_pieces END) AS true_count
       FROM bundles b
       LEFT JOIN (
         SELECT bundle_id, MAX(count_pass) AS true_count
         FROM sessions WHERE module_type = 'OUTPUT_2' AND count_pass > 0
         GROUP BY bundle_id
       ) o2 ON o2.bundle_id = b.id
-    ),
-    samples AS (
-      SELECT t.garment_model_id, t.size_code, up.module_type,
-             up.count_cycle::float / t.true_count AS ppp
-      FROM truth t
-      JOIN sessions up ON up.bundle_id = t.bundle_id
-       AND up.module_type IN ('INPUT','OUTPUT_1') AND up.count_cycle > 0
-      WHERE t.true_count > 0
-    )
-    SELECT
-      COALESCE(garment_model_id, 0) AS garment_model_id,
-      COALESCE(size_code, 0)        AS size_code,
-      module_type::text             AS module_type,
-      percentile_cont(0.5) WITHIN GROUP (ORDER BY ppp) AS median_ppp,
-      avg(ppp)                      AS mean_ppp,
-      min(ppp)                      AS min_ppp,
-      max(ppp)                      AS max_ppp,
-      count(*)                      AS samples
-    FROM samples
-    GROUP BY 1, 2, 3
-    ORDER BY 1, 2, 3
-  `,
+     WHERE COALESCE(o2.true_count, CASE WHEN $1 THEN b.declared_pieces END) > 0
+    `,
     [includeDeclared]
   );
+
+  if (!truthRows.length) {
+    return { applied: apply, includeDeclared, groups: 0, totalSamples: 0, rows: [] };
+  }
+
+  const { rows: sessionRows } = await query(
+    `SELECT id, bundle_id, module_type, count_pass, count_cycle
+       FROM sessions
+      WHERE module_type IN ('INPUT', 'OUTPUT_1')
+        AND bundle_id = ANY($1::uuid[])`,
+    [truthRows.map((r) => r.bundle_id)]
+  );
+
+  const truthByBundle = new Map(truthRows.map((r) => [r.bundle_id, r]));
+  const buckets = new Map();
+
+  for (const s of sessionRows) {
+    const truth = truthByBundle.get(s.bundle_id);
+    if (!truth?.true_count) continue;
+
+    const pulses = await sessionPrimaryPulseCount(s.id, s.module_type, s);
+    if (!pulses || pulses <= 0) continue;
+
+    const ppp = pulses / truth.true_count;
+    if (!Number.isFinite(ppp) || ppp <= 0) continue;
+
+    const key = `${truth.garment_model_id || 0}:${truth.size_code || 0}:${s.module_type}`;
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        garment_model_id: truth.garment_model_id || 0,
+        size_code: truth.size_code || 0,
+        module_type: s.module_type,
+        ppps: [],
+      });
+    }
+    buckets.get(key).ppps.push(ppp);
+  }
+
+  const rows = [...buckets.values()]
+    .map((b) => {
+      const sorted = [...b.ppps].sort((a, c) => a - c);
+      const mid = Math.floor(sorted.length / 2);
+      const medianPpp =
+        sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+      return {
+        garment_model_id: b.garment_model_id,
+        size_code: b.size_code,
+        module_type: b.module_type,
+        median_ppp: medianPpp,
+        mean_ppp: sorted.reduce((a, v) => a + v, 0) / sorted.length,
+        min_ppp: sorted[0],
+        max_ppp: sorted[sorted.length - 1],
+        samples: sorted.length,
+      };
+    })
+    .sort((a, b) =>
+      a.garment_model_id - b.garment_model_id ||
+      a.size_code - b.size_code ||
+      a.module_type.localeCompare(b.module_type)
+    );
 
   if (apply) {
     for (const r of rows) {
@@ -331,7 +379,6 @@ async function recalibrateFromHistory({ apply = false, includeDeclared = false }
   };
 }
 
-// Current saved calibration for a style+size+module (UI before/after display).
 async function getCalibration(garmentModelId, sizeCode, moduleType) {
   const { rows } = await query(
     `SELECT pulses_per_piece, sample_count, updated_at

@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { query } = require('../db');
 const { raiseAlert } = require('./alerts');
 const { getAdminReaderMode } = require('./adminReaderMode');
+const { sessionPrimaryPulseCount } = require('./trainingSignals');
 
 function makeToken(prefix = 'tok') {
   return `${prefix}_${crypto.randomBytes(24).toString('hex')}`;
@@ -229,9 +230,8 @@ async function lookupPpp(garmentModelId, sizeCode, moduleType) {
 }
 
 // Reconcile PPP using the OUTPUT_2 ground-truth count. For each upstream
-// station that recorded raw rotations (count_cycle) on this bundle, fold
-// rotations/trueCount into the rolling average for its style+size+operation.
-// LEAST(sample_count, 50) caps the window so the estimate stays adaptive.
+// station, fold primary sensor pulses / trueCount into the rolling average.
+// INPUT → current run cycles (from amps); OUTPUT_1 → IR (count_pass); not hall.
 async function reconcilePpp(bundleId, trueCount) {
   if (!bundleId || !trueCount || trueCount <= 0) return;
 
@@ -245,16 +245,17 @@ async function reconcilePpp(bundleId, trueCount) {
   const size = bundle.size_code || 0;
 
   const { rows: sRows } = await query(
-    `SELECT module_type, count_cycle
+    `SELECT id, module_type, count_pass, count_cycle
        FROM sessions
       WHERE bundle_id = $1
-        AND module_type IN ('INPUT','OUTPUT_1')
-        AND count_cycle > 0`,
+        AND module_type IN ('INPUT','OUTPUT_1')`,
     [bundleId]
   );
 
   for (const s of sRows) {
-    const sample = s.count_cycle / trueCount;
+    const pulses = await sessionPrimaryPulseCount(s.id, s.module_type, s);
+    if (!pulses || pulses <= 0) continue;
+    const sample = pulses / trueCount;
     if (!Number.isFinite(sample) || sample <= 0) continue;
     await query(
       `INSERT INTO ppp_calibration
@@ -424,7 +425,7 @@ async function ingestScan(node, body) {
     if (openSame.rowCount > 0) {
       sessionId = openSame.rows[0].id;
       await query(
-        `UPDATE sessions SET end_ts = $2, close_reason = 'CARD_TAP' WHERE id = $1`,
+        `UPDATE sessions SET end_ts = $2, close_reason = 'NEXT_TAP' WHERE id = $1`,
         [sessionId, when]
       );
     } else {
@@ -562,6 +563,51 @@ async function ingestUnassigned(node, body) {
   return { ok: true };
 }
 
+const SESSION_STALE_MINUTES = 45;
+
+async function closeOpenSessionsForNode(nodeId, closeReason = 'TIMEOUT', endTs = new Date()) {
+  const { rows } = await query(
+    `UPDATE sessions SET end_ts = $2, close_reason = $3::close_reason
+     WHERE node_id = $1 AND end_ts IS NULL
+     RETURNING id`,
+    [nodeId, endTs, closeReason]
+  );
+  return rows;
+}
+
+/** Close DB sessions that no longer match device state (reboot / crash / OTA). */
+async function reconcileStaleSessions(nodeId, flags) {
+  if (flags?.sessionOpen === false) {
+    const closed = await closeOpenSessionsForNode(nodeId, 'TIMEOUT');
+    if (closed.length > 0) {
+      console.log(
+        `reconcile: closed ${closed.length} phantom session(s) on ${nodeId} (heartbeat sessionOpen=false)`
+      );
+    }
+    return;
+  }
+
+  // Old firmware without sessionOpen — close open sessions with no activity past timeout.
+  if (flags?.sessionOpen !== true) {
+    const { rowCount } = await query(
+      `UPDATE sessions s SET end_ts = NOW(), close_reason = 'TIMEOUT'
+       WHERE s.node_id = $1 AND s.end_ts IS NULL
+         AND s.start_ts < NOW() - ($2::text || ' minutes')::interval
+         AND NOT EXISTS (
+           SELECT 1 FROM count_samples cs
+           WHERE cs.session_id = s.id
+             AND cs.ts > NOW() - ($2::text || ' minutes')::interval
+         )`,
+      [nodeId, String(SESSION_STALE_MINUTES)]
+    );
+    if (rowCount > 0) {
+      console.log(
+        `reconcile: closed ${rowCount} stale session(s) on ${nodeId} (>${SESSION_STALE_MINUTES}m idle)`
+      );
+    }
+  }
+}
+
 async function ingestHeartbeat(node, body) {
   const { rssi, uptime, fwVersion, queueDepth, flags, ackedOp } = body;
 
@@ -584,6 +630,8 @@ async function ingestHeartbeat(node, body) {
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [node.id, rssi, uptime, fwVersion, queueDepth, flags ? JSON.stringify(flags) : null]
   );
+
+  await reconcileStaleSessions(node.id, flags);
 
   // QUEUE_OVERFLOW alert from heartbeat overflow flag
   if (flags?.overflow) {

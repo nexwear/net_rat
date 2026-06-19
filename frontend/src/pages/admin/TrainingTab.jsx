@@ -1,8 +1,25 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { API_BASE, adminHeaders } from './AdminPage.jsx'
 
-// Only rotary stations have a count_cycle to learn pulses-per-piece from.
+// Only INPUT / OUTPUT_1 support supervised PPP training.
 const TRAINABLE = ['INPUT', 'OUTPUT_1']
+
+const SIGNAL_UI = {
+  INPUT: {
+    primaryLabel: 'Current runs',
+    pieceLabel: 'This piece (current)',
+    secondaryLabel: 'IR pieces',
+    help: 'INPUT calibration uses current run cycles (from the CT sensor) and shows IR horseshoe count alongside. Hall rotations are ignored.',
+    markUnit: 'current runs',
+  },
+  OUTPUT_1: {
+    primaryLabel: 'IR pieces',
+    pieceLabel: 'This piece (IR)',
+    secondaryLabel: null,
+    help: 'OUTPUT_1 calibration uses IR horseshoe beam breaks only — no hall or current sensor.',
+    markUnit: 'IR breaks',
+  },
+}
 
 const selectStyle = {
   background: 'var(--surface-1)',
@@ -155,17 +172,17 @@ export default function TrainingTab() {
   if (loading) return <p className="loading">Loading…</p>
 
   const sessionOpen = !!(training?.live || live)
-  const liveCycle = training?.live?.cycle ?? live?.cycle ?? null
-  const livePass = training?.live?.pass ?? live?.pass ?? null
+  const mod = selectedNode?.module_type
+  const sigUi = SIGNAL_UI[mod] || {}
+  const livePrimary = training?.live?.primary ?? live?.primary ?? null
+  const liveIr = training?.live?.ir ?? live?.ir ?? training?.live?.pass ?? live?.pass ?? null
   const liveAmps = training?.live?.amps ?? live?.amps ?? null
-  // Rotations accumulated toward the in-progress piece (since the last mark, or
-  // the baseline at start) — watch this climb, then mark when the garment is done.
-  const lastMarkCycle = training
-    ? (training.marks.length ? training.marks[training.marks.length - 1].cycle : training.baselineCycle)
+  const lastMarkPrimary = training
+    ? (training.marks.length ? training.marks[training.marks.length - 1].primary : training.baselineCycle)
     : null
-  const pieceRot =
-    training && liveCycle != null && lastMarkCycle != null
-      ? Math.max(0, liveCycle - lastMarkCycle)
+  const piecePrimary =
+    training && livePrimary != null && lastMarkPrimary != null
+      ? Math.max(0, livePrimary - lastMarkPrimary)
       : null
 
   return (
@@ -177,10 +194,11 @@ export default function TrainingTab() {
         </button>
       </div>
       <p className="tab-help" style={{ marginTop: 0 }}>
-        Calibrate pulses-per-piece for a rotary station. Pick the node + garment + size,
+        Calibrate pulses-per-piece for a station. Pick the node + garment + size,
         have the operator tap their card to start a session, then tap <b>Piece Completed</b>
         {' '}(or press <b>Space</b>) each time a garment is finished. <b>Finish &amp; Save</b> writes
-        the median rotations-per-piece into the calibration table.
+        the median pulses-per-piece into the calibration table.
+        {sigUi.help && <> {sigUi.help}</>}
       </p>
 
       {error && <p className="error">{error}</p>}
@@ -254,15 +272,15 @@ export default function TrainingTab() {
             </span>
           </div>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            <Stat label="Live rotations" value={liveCycle != null ? liveCycle : '—'} accent />
-            {training && <Stat label="This piece (rot)" value={pieceRot != null ? pieceRot : '—'} accent />}
-            <Stat label="Node pieces" value={livePass != null ? livePass : '—'} />
-            <Stat label="Current" value={liveAmps != null ? `${Number(liveAmps).toFixed(2)} A` : '—'} />
+            <Stat label={sigUi.primaryLabel || 'Live pulses'} value={livePrimary != null ? livePrimary : '—'} accent />
+            {training && <Stat label={sigUi.pieceLabel || 'This piece'} value={piecePrimary != null ? piecePrimary : '—'} accent />}
+            {mod === 'INPUT' && <Stat label={sigUi.secondaryLabel || 'IR'} value={liveIr != null ? liveIr : '—'} />}
+            {mod === 'INPUT' && <Stat label="Current" value={liveAmps != null ? `${Number(liveAmps).toFixed(2)} A` : '—'} />}
           </div>
           {!sessionOpen && (
             <p className="warn-text" style={{ marginBottom: 0, marginTop: 12 }}>
               No open session — have the operator tap their bundle-assigned card on this node
-              so rotations start streaming. Then start training and mark each finished piece.
+              so sensor data starts streaming. Then start training and mark each finished piece.
             </p>
           )}
         </div>
@@ -284,13 +302,13 @@ export default function TrainingTab() {
             <Stat label="Running PPP (median)"
               value={training.runningPpp != null ? Math.round(training.runningPpp) : '—'} accent />
             <Stat label="Last piece"
-              value={training.lastDelta != null ? `${training.lastDelta} rot` : '—'} />
+              value={training.lastDelta != null ? `${training.lastDelta} ${sigUi.markUnit || 'pulses'}` : '—'} />
           </div>
 
           {!sessionOpen && (
             <p className="warn-text" style={{ marginTop: 0 }}>
               No open session on this node yet — have the operator tap their (bundle-assigned)
-              card so rotations start counting, then mark pieces.
+              card so sensor data starts counting, then mark pieces.
             </p>
           )}
 
@@ -329,7 +347,7 @@ export default function TrainingTab() {
             <div className="table-wrap" style={{ marginTop: 18 }}>
               <table className="admin-table">
                 <thead>
-                  <tr><th>Piece</th><th>Rotations</th><th>Cumulative</th><th>Marked</th></tr>
+                  <tr><th>Piece</th><th>Pulses</th><th>Cumulative</th>{mod === 'INPUT' && <th>IR</th>}<th>Marked</th></tr>
                 </thead>
                 <tbody>
                   {[...training.marks].reverse().map((m) => (
@@ -338,7 +356,8 @@ export default function TrainingTab() {
                       <td className={m.delta > 0 ? '' : 'pending-op'}>
                         {m.delta != null ? m.delta : '—'}{m.delta <= 0 ? ' (ignored)' : ''}
                       </td>
-                      <td className="mono">{m.cycle}</td>
+                      <td className="mono">{m.primary}</td>
+                      {mod === 'INPUT' && <td className="mono">{m.ir ?? '—'}</td>}
                       <td>{m.at ? new Date(m.at).toLocaleTimeString() : '—'}</td>
                     </tr>
                   ))}
@@ -392,8 +411,9 @@ function RecomputeModal({ models, sizes, onClose, onApplied }) {
       <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
         <h2>Recompute calibration from history</h2>
         <p className="info-text" style={{ marginTop: 0 }}>
-          Median rotations-per-piece across every finished bundle, using the OUTPUT_2
-          ground-truth count. This <b>overwrites</b> matching calibration rows.
+          Median pulses-per-piece across every finished bundle, using the OUTPUT_2
+          ground-truth count. INPUT uses current run cycles; OUTPUT_1 uses IR only.
+          This <b>overwrites</b> matching calibration rows.
         </p>
 
         <label className="check-row">

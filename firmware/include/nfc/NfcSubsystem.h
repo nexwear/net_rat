@@ -61,8 +61,8 @@ class NfcSubsystem {
   char _lastUid[24] = "";
 
   static constexpr uint32_t POLL_INTERVAL_MS = 120;
-  static constexpr uint32_t ABSENT_CHECK_MS = 300;
-  static constexpr uint32_t POST_READ_QUIET_MS = 1000;
+  static constexpr uint32_t ABSENT_CHECK_MS = 120;
+  static constexpr uint32_t POST_READ_QUIET_MS = 180;
   static constexpr uint32_t TAP_GLITCH_MS = 300;
   static constexpr uint32_t ASSIGN_SAME_UID_MS = 1500;
   static constexpr uint32_t ASSIGN_RF_QUIET_MS = 300;

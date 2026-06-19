@@ -1,6 +1,6 @@
 #include "net/TelemetrySender.h"
-#include "types.h"
 #include "core/RuntimeFlags.h"
+#include "types.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <HTTPClient.h>
@@ -180,6 +180,7 @@ bool TelemetrySender::sendHeartbeat(int rssi, uint32_t uptimeSec, size_t queueDe
   // merges this into a jsonb column, so a bare number would break ingestion.
   JsonObject flagsObj = doc["flags"].to<JsonObject>();
   flagsObj["overflow"] = (flags & 0x1) != 0;
+  flagsObj["sessionOpen"] = gSessionOpen.load();
   flagsObj["freeHeap"] = ESP.getFreeHeap();
   flagsObj["minHeap"] = ESP.getMinFreeHeap();  // low-water — catches slow leaks
   // Per-task stack headroom (FreeRTOS high-water, bytes). Trending toward 0
