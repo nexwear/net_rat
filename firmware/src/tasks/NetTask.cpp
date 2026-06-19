@@ -90,12 +90,14 @@ void fetchCardDeclared(const DeviceConfig& cfg, QueueHandle_t commandQ, const ch
   cmd.type = CmdType::CARD_DECLARED;
   cmd.declaredPieces = 0;
   cmd.ppp = 0;
+  cmd.cardAssigned = false;
 
   if (code == 200) {
     JsonDocument doc;
     if (deserializeJson(doc, body) == DeserializationError::Ok) {
       cmd.declaredPieces = doc["declaredPieces"] | 0;
       cmd.ppp = doc["ppp"] | 0;
+      cmd.cardAssigned = true;
       Serial.printf("[NET] card %s declared=%lu pieces ppp=%lu\n", cardUid, cmd.declaredPieces,
                     cmd.ppp);
     }

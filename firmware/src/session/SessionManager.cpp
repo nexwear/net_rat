@@ -288,6 +288,17 @@ void SessionManager::setCloudSessionId(const char* sessionId) {
   _lastEmitMs = millis();
 }
 
+void SessionManager::abortUnassignedSession() {
+  if (!hasOpenSession()) {
+    return;
+  }
+  Serial.println("[SESSION] aborted — card has no bundle assigned");
+  if (_buzzer) {
+    _buzzer->play(BuzzPattern::ERROR);
+  }
+  closeSession(CloseReason::TAP_OUT, ScanKind::TAP_OUT);
+}
+
 void SessionManager::setDeclaredPieces(uint32_t pieces) {
   _cachedDeclared = pieces;
   _qtyReachedMs = 0;

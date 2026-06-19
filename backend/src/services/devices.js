@@ -417,6 +417,18 @@ async function ingestScan(node, body) {
 
   let sessionId;
   if (kind === 'TAP_IN' && bundleId) {
+    const { rows: bundleRows } = await query('SELECT status FROM bundles WHERE id = $1', [bundleId]);
+    if (bundleRows[0]?.status === 'COMPLETED') {
+      return assignScanResponse(cardUid, cardInfo, {
+        bundleId,
+        sessionId: null,
+        skippedSession: true,
+        mode: assignMeta.mode,
+        ignored: assignMeta.ignored,
+        unregistered: assignMeta.unregistered,
+      });
+    }
+
     if (!deviceReportsSessionOpen(body)) {
       return assignScanResponse(cardUid, cardInfo, {
         bundleId,
@@ -446,11 +458,11 @@ async function ingestScan(node, body) {
       if (node.module_type === 'OUTPUT_2') {
         await reconcilePpp(bundleId, sess[0]?.count_pass ?? 0);
       }
-      await finalizeBundle(bundleId, cardUid);
+      await completeBundle(bundleId, cardUid);
       return assignScanResponse(cardUid, cardInfo, {
         bundleId,
         sessionId: null,
-        bundleFinalized: true,
+        bundleCompleted: true,
         mode: assignMeta.mode,
         ignored: assignMeta.ignored,
         unregistered: assignMeta.unregistered,
@@ -496,7 +508,10 @@ async function upsertOpenSessionCounts({ node, sessionId, bundleId, cardUid, whe
       `INSERT INTO sessions (id, bundle_id, card_uid, module_type, node_id, start_ts, count_pass, count_cycle)
        VALUES ($1, $2, $3, $4::module_type, $5, $6, $7, $8)
        ON CONFLICT (bundle_id, module_type) DO UPDATE
-       SET count_pass = EXCLUDED.count_pass, count_cycle = EXCLUDED.count_cycle, node_id = EXCLUDED.node_id
+       SET count_pass = GREATEST(sessions.count_pass, EXCLUDED.count_pass),
+           count_cycle = GREATEST(sessions.count_cycle, EXCLUDED.count_cycle),
+           node_id = EXCLUDED.node_id
+       WHERE sessions.end_ts IS NULL
        RETURNING id`,
       [sessionId, bundleId, cardUid, node.module_type, node.id, when, pass, cycle]
     );
@@ -504,9 +519,11 @@ async function upsertOpenSessionCounts({ node, sessionId, bundleId, cardUid, whe
   }
 
   const { rows } = await query(
-    `UPDATE sessions SET count_pass = $2, count_cycle = $3
-     WHERE node_id = $1 AND end_ts IS NULL
-     RETURNING id`,
+    `UPDATE sessions
+        SET count_pass = GREATEST(count_pass, $2),
+            count_cycle = GREATEST(count_cycle, $3)
+      WHERE node_id = $1 AND end_ts IS NULL
+      RETURNING id`,
     [node.id, pass, cycle]
   );
   if (rows[0]?.id) {
@@ -596,10 +613,10 @@ async function closeOpenSession({
   return { sessionId: resolvedId, countPass: finalPass, countCycle: finalCycle };
 }
 
-/** Release the card and remove the bundle after a station finishes its session. */
-async function finalizeBundle(bundleId, cardUid) {
+/** Release the card and mark the bundle completed — keep sessions for stats/history. */
+async function completeBundle(bundleId, cardUid) {
   if (!bundleId) {
-    return { released: false, deleted: false };
+    return { released: false, completed: false };
   }
 
   await query(
@@ -614,16 +631,11 @@ async function finalizeBundle(bundleId, cardUid) {
     );
   }
 
-  await query(
-    `DELETE FROM count_samples
-      WHERE session_id IN (SELECT id FROM sessions WHERE bundle_id = $1)`,
+  const { rowCount } = await query(
+    `UPDATE bundles SET status = 'COMPLETED', card_uid = NULL WHERE id = $1`,
     [bundleId]
   );
-  await query('DELETE FROM sessions WHERE bundle_id = $1', [bundleId]);
-  await query('UPDATE scan_events SET bundle_id = NULL WHERE bundle_id = $1', [bundleId]);
-
-  const { rowCount } = await query('DELETE FROM bundles WHERE id = $1', [bundleId]);
-  return { released: true, deleted: rowCount > 0 };
+  return { released: true, completed: rowCount > 0 };
 }
 
 async function ingestSession(node, body) {
@@ -686,7 +698,7 @@ async function ingestSession(node, body) {
       await reconcilePpp(bundleId, closed.countPass);
     }
 
-    const finalized = await finalizeBundle(bundleId, cardUid);
+    const finalized = await completeBundle(bundleId, cardUid);
 
     return {
       ok: true,
@@ -694,7 +706,7 @@ async function ingestSession(node, body) {
       countPass: closed.countPass,
       countCycle: closed.countCycle,
       bundleId,
-      bundleFinalized: finalized.deleted,
+      bundleCompleted: finalized.completed,
     };
   }
 

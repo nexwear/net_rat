@@ -49,6 +49,7 @@ struct Command {
   uint32_t resumePass = 0;
   uint32_t resumeCycle = 0;
   uint64_t resumeStartEpochMs = 0;
+  bool cardAssigned = true;
 };
 
 inline const char* moduleTypeToString(ModuleType t) {

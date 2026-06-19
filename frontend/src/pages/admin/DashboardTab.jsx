@@ -581,6 +581,9 @@ export default function DashboardTab() {
     } else if (type === 'scan_event') {
       fetchSnapshot()
       fetchStats()
+    } else if (type === 'bundle_completed') {
+      fetchSnapshot()
+      fetchStats()
     }
   }
 

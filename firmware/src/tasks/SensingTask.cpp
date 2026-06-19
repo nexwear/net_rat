@@ -73,8 +73,12 @@ void sensingLoop(void* param) {
       if (cmd.type == CmdType::REPROVISION && !sessions.hasOpenSession()) {
         ctx->nodeState->store(NodeState::REPROVISIONING);
       } else if (cmd.type == CmdType::CARD_DECLARED) {
-        sessions.setPpp(cmd.ppp);
-        sessions.setDeclaredPieces(cmd.declaredPieces);
+        if (!cmd.cardAssigned) {
+          sessions.abortUnassignedSession();
+        } else {
+          sessions.setPpp(cmd.ppp);
+          sessions.setDeclaredPieces(cmd.declaredPieces);
+        }
       } else if (cmd.type == CmdType::SESSION_SYNC) {
         sessions.setCloudSessionId(cmd.sessionId);
       } else if (cmd.type == CmdType::SESSION_RESUME) {

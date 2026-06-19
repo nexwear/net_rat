@@ -136,13 +136,18 @@ router.get('/dashboard/stats', async (_req, res) => {
         FROM bundles
       `),
 
-      // Today's piece counts
+      // Today's piece counts (finished today + in-progress started today)
       query(`
         SELECT
-          COALESCE(SUM(count_pass) FILTER (WHERE module_type = 'INPUT'), 0)                 AS input_today,
-          COALESCE(SUM(count_pass) FILTER (WHERE module_type IN ('OUTPUT_1','OUTPUT_2')), 0) AS output_today
+          COALESCE(SUM(count_pass) FILTER (
+            WHERE module_type = 'INPUT'
+              AND (end_ts >= CURRENT_DATE OR (end_ts IS NULL AND start_ts >= CURRENT_DATE))
+          ), 0) AS input_today,
+          COALESCE(SUM(count_pass) FILTER (
+            WHERE module_type IN ('OUTPUT_1','OUTPUT_2')
+              AND (end_ts >= CURRENT_DATE OR (end_ts IS NULL AND start_ts >= CURRENT_DATE))
+          ), 0) AS output_today
         FROM sessions
-        WHERE start_ts >= CURRENT_DATE
       `),
 
       // Per-line aggregates (all time)

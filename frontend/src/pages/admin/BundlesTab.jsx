@@ -585,9 +585,10 @@ export default function BundlesTab() {
     ws.onmessage = (event) => {
       try {
         const { type, payload } = JSON.parse(event.data)
-        if (type === 'bundle_finalized' && payload?.bundleId) {
-          setBundles((prev) => prev.filter((b) => b.id !== payload.bundleId))
-          setTrackBundleId((id) => (id === payload.bundleId ? null : id))
+        if (type === 'bundle_completed' && payload?.bundleId) {
+          setBundles((prev) => prev.map((b) => (
+            b.id === payload.bundleId ? { ...b, status: 'COMPLETED', assigned_card_uid: null, card_uid: null } : b
+          )))
           setAssignBundle((b) => (b?.id === payload.bundleId ? null : b))
         }
       } catch {}
