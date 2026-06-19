@@ -1,29 +1,16 @@
 #include "drivers/InputPieceFusion.h"
 #include <Arduino.h>
-#include <cstring>
 
 InputPieceFusion::InputPieceFusion(CurrentDriver* current, HorseshoeIrDriver* horseshoe)
     : _current(current), _ir(horseshoe) {}
 
-void InputPieceFusion::recordRunEnd(uint32_t ms) {
-  _runEndMs[_runEndHead] = ms;
-  _runEndHead = static_cast<uint8_t>((_runEndHead + 1) % kRunHistory);
-}
-
-bool InputPieceFusion::hadRunNear(uint32_t ms) const {
-  for (uint8_t i = 0; i < kRunHistory; ++i) {
-    const uint32_t end = _runEndMs[i];
-    if (end == 0) {
-      continue;
-    }
-    if (ms >= end && (ms - end) <= RUN_NEAR_MS) {
-      return true;
-    }
-    if (end >= ms && (end - ms) <= RUN_NEAR_MS) {
-      return true;
-    }
-  }
-  return false;
+void InputPieceFusion::resetCycle() {
+  _phase = Phase::IDLE;
+  _runStartMs = 0;
+  _lowHoldStartMs = 0;
+  _offSinceMs = 0;
+  _peakAmps = 0.0f;
+  _irLiftsThisCycle = 0;
 }
 
 void InputPieceFusion::tryCountPiece(uint32_t now, const char* reason) {
@@ -32,27 +19,27 @@ void InputPieceFusion::tryCountPiece(uint32_t now, const char* reason) {
   }
   _pieces++;
   _lastPieceMs = now;
-  Serial.printf("[FUSION] piece #%lu (%s)\n", static_cast<unsigned long>(_pieces), reason);
+  Serial.printf("[FUSION] piece #%lu (%s", static_cast<unsigned long>(_pieces), reason);
+  if (_irLiftsThisCycle > 0) {
+    Serial.printf("+ir=%u", _irLiftsThisCycle);
+  }
+  Serial.println(")");
 }
 
-void InputPieceFusion::onRunEnded(uint32_t now) {
-  const uint32_t duration = now - _runStartMs;
-  recordRunEnd(now);
+void InputPieceFusion::noteIrLift(uint32_t atMs) {
+  (void)atMs;
+  if (_phase == Phase::RUNNING || _phase == Phase::LOW_HOLD) {
+    _irLiftsThisCycle++;
+  }
+}
+
+void InputPieceFusion::finishPiece(uint32_t now, const char* reason) {
+  const uint32_t duration =
+      _runStartMs > 0 ? now - _runStartMs : (_lowHoldStartMs > 0 ? now - _lowHoldStartMs : 0);
   if (_peakAmps >= MIN_PEAK_A && duration >= MIN_RUN_MS) {
-    tryCountPiece(now, "current-run");
+    tryCountPiece(now, reason);
   }
-}
-
-void InputPieceFusion::onIrLift(uint32_t atMs) {
-  // Lift shortly after a motor run, or lift while current still elevated → one piece.
-  if (hadRunNear(atMs)) {
-    tryCountPiece(atMs, "run+ir");
-    return;
-  }
-  const float amps = _current ? _current->aux() : 0.0f;
-  if (amps >= RUN_OFF_A) {
-    tryCountPiece(atMs, "ir-during-run");
-  }
+  resetCycle();
 }
 
 void InputPieceFusion::poll() {
@@ -65,33 +52,65 @@ void InputPieceFusion::poll() {
 
   uint32_t liftMs = 0;
   while (_ir->consumeLiftEvent(liftMs)) {
-    onIrLift(liftMs);
+    noteIrLift(liftMs);
   }
 
-  if (!_running) {
-    if (amps >= RUN_ON_A) {
-      _running = true;
-      _runStartMs = now;
-      _peakAmps = amps;
-      _offSinceMs = 0;
-    }
-    return;
-  }
+  switch (_phase) {
+    case Phase::IDLE:
+      if (amps >= RUN_ON_A) {
+        _phase = Phase::RUNNING;
+        _runStartMs = now;
+        _peakAmps = amps;
+        _offSinceMs = 0;
+        _irLiftsThisCycle = 0;
+      }
+      break;
 
-  if (amps > _peakAmps) {
-    _peakAmps = amps;
-  }
+    case Phase::RUNNING:
+      if (amps > _peakAmps) {
+        _peakAmps = amps;
+      }
 
-  if (amps < RUN_OFF_A) {
-    if (_offSinceMs == 0) {
-      _offSinceMs = now;
-    } else if ((now - _offSinceMs) >= MIN_OFF_MS) {
-      onRunEnded(now);
-      _running = false;
-      _offSinceMs = 0;
-      _peakAmps = 0.0f;
-    }
-  } else {
-    _offSinceMs = 0;
+      if (amps < RUN_OFF_A) {
+        if (_offSinceMs == 0) {
+          _offSinceMs = now;
+        }
+        const uint32_t offMs = now - _offSinceMs;
+        if (amps < IDLE_MIN_A && offMs >= MIN_OFF_MS) {
+          finishPiece(now, "zero-peak-zero");
+        } else if (amps >= IDLE_MIN_A && offMs >= MIN_OFF_MS) {
+          _phase = Phase::LOW_HOLD;
+          _lowHoldStartMs = now;
+          _offSinceMs = 0;
+        }
+      } else {
+        _offSinceMs = 0;
+      }
+      break;
+
+    case Phase::LOW_HOLD:
+      if (amps >= RUN_ON_A) {
+        _phase = Phase::RUNNING;
+        _offSinceMs = 0;
+        if (amps > _peakAmps) {
+          _peakAmps = amps;
+        }
+        break;
+      }
+
+      if (amps < IDLE_MIN_A) {
+        if (_offSinceMs == 0) {
+          _offSinceMs = now;
+        } else if ((now - _offSinceMs) >= MIN_OFF_MS) {
+          finishPiece(now, "zero-peak-min-zero");
+        }
+      } else {
+        _offSinceMs = 0;
+      }
+
+      if (_lowHoldStartMs > 0 && (now - _lowHoldStartMs) > LOW_HOLD_MAX_MS) {
+        finishPiece(now, "low-hold-timeout");
+      }
+      break;
   }
 }

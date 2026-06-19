@@ -42,9 +42,7 @@ uint32_t SessionManager::passCount() const {
     return deltaFor(DriverId::PRESS);
   }
   if (mt == ModuleType::MOD_INPUT) {
-    const uint32_t fused = deltaFor(DriverId::FUSION);
-    const uint32_t groups = horseshoeGroups();
-    return fused > groups ? fused : groups;
+    return deltaFor(DriverId::FUSION);
   }
   const uint32_t groups = horseshoeGroups();
   const uint32_t est = quantumEstimate();
