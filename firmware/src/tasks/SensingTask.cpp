@@ -136,6 +136,10 @@ void sensingLoop(void* param) {
       digitalWrite(pinMap.statusLed, LOW);
     }
 
+    // Liveness stamp — completing this iteration proves the NFC/sensing loop is
+    // not wedged. NetTask reboots the node if this stops advancing.
+    gSensingAliveMs.store(millis());
+
     vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(10));
   }
 }

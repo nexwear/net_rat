@@ -3,6 +3,16 @@ const { Pool } = require('pg');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : undefined,
+  // Sized for many concurrent nodes sharing the pool with dashboard/analytics
+  // queries. Defaults are env-overridable; keep max ≤ Postgres max_connections.
+  max: Number(process.env.PG_POOL_MAX) || 20,
+  idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS) || 30000,
+  connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS) || 10000,
+});
+
+// A slow/transient query shouldn't take the whole pool down — log and continue.
+pool.on('error', (err) => {
+  console.error('[db] idle client error:', err.message);
 });
 
 const SCHEMA = `
@@ -110,6 +120,15 @@ CREATE TABLE IF NOT EXISTS count_samples (
   current_amps REAL,
   ts TIMESTAMPTZ
 );
+
+-- count_samples is read by session_id (PPP reconcile + training); without this
+-- index those become sequential scans as the table grows, holding pool
+-- connections longer and degrading ingest concurrency.
+CREATE INDEX IF NOT EXISTS count_samples_session_ts ON count_samples(session_id, ts);
+
+-- Hot path for every session close/resume from each node: find the open session
+-- on a node. Partial index keeps it tiny (only currently-open sessions).
+CREATE INDEX IF NOT EXISTS sessions_node_open ON sessions(node_id) WHERE end_ts IS NULL;
 
 CREATE TABLE IF NOT EXISTS unassigned_counts (
   id BIGSERIAL PRIMARY KEY,
@@ -296,6 +315,22 @@ async function initDb() {
   await pool.query(
     'ALTER TABLE ppp_training_marks ADD COLUMN IF NOT EXISTS delta_pass INT'
   );
+
+  // Atomic card-number allocation. Created exactly once, starting just above the
+  // current max so concurrent registrations can't collide (the old MAX(..)+1
+  // read-then-insert could hand two new cards the same number). Never reseeded.
+  await pool.query(`
+    DO $$
+    DECLARE startv BIGINT;
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_class WHERE relkind = 'S' AND relname = 'cards_card_number_seq'
+      ) THEN
+        SELECT COALESCE(MAX(card_number), 0) + 1 INTO startv FROM cards;
+        EXECUTE format('CREATE SEQUENCE cards_card_number_seq START WITH %s', startv);
+      END IF;
+    END $$;
+  `);
 
   const factory = await pool.query('SELECT id FROM factories LIMIT 1');
   if (factory.rowCount === 0) {

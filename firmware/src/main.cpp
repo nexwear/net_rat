@@ -6,6 +6,7 @@
 #include "prov/SerialConfig.h"
 #include "tasks/NetTask.h"
 #include "tasks/SensingTask.h"
+#include "core/RuntimeFlags.h"
 
 static DeviceConfig gConfig;
 static std::atomic<NodeState> gNodeState{NodeState::PROVISIONING};
@@ -19,6 +20,7 @@ void setup() {
   delay(500);
   Serial.println("Grewbie garment-line node boot");
 
+  ConfigStore::initMutex();  // serialize all NVS access before any task starts
   ConfigStore::loadSeq(gSeq);
 
   if (ConfigStore::load(gConfig)) {
@@ -54,6 +56,7 @@ void setup() {
 
   telemetryQ = xQueueCreate(32, sizeof(TelemetryEvent));
   commandQ = xQueueCreate(16, sizeof(Command));
+  gCardLookupQ = xQueueCreate(1, sizeof(CardLookupMsg));
 
   startNetTask(gConfig, telemetryQ, commandQ, gNodeState, gSeq);
   startSensingTask(gConfig, telemetryQ, commandQ, gNodeState, gSeq);

@@ -25,6 +25,8 @@ struct DeviceConfig {
 
 class ConfigStore {
  public:
+  // Create the NVS guard mutex. Call once from setup() before any task starts.
+  static void initMutex();
   static bool load(DeviceConfig& out);
   static bool save(const DeviceConfig& cfg);
   static void wipe();

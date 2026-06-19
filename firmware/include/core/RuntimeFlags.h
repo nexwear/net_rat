@@ -3,6 +3,7 @@
 #include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/queue.h>
 
 inline std::atomic<bool> gSessionOpen{false};
 inline std::atomic<bool> gOtaActive{false};
@@ -14,9 +15,20 @@ inline TaskHandle_t gNetTaskHandle = nullptr;
 inline TaskHandle_t gSensingTaskHandle = nullptr;
 inline TaskHandle_t gCurrentTaskHandle = nullptr;
 
-struct CardLookupRequest {
-  std::atomic<bool> pending{false};
-  char cardUid[24] = "";
+// Liveness heartbeat for the sensing/NFC loop: SensingTask stamps millis() at the
+// end of every iteration. NetTask reboots the node if this stops advancing, which
+// recovers a wedged PN5180 (a blocking SPI call that hangs the loop) even though
+// SensingTask is intentionally NOT on the shared task-WDT (its recovery delays
+// used to trip it). 0 = sensing not started yet (no reboot during boot).
+inline std::atomic<uint32_t> gSensingAliveMs{0};
+
+// Card-lookup request: SensingTask hands the tapped UID to NetTask, which does
+// the server declared/ppp lookup. A length-1 queue (written with xQueueOverwrite,
+// "latest tap wins") replaces a shared char buffer — no torn reads across tasks,
+// and the request now survives until NetTask is online to consume it (an offline
+// tap previously cleared the pending flag and dropped the lookup entirely).
+struct CardLookupMsg {
+  char cardUid[24];
 };
 
-inline CardLookupRequest gCardLookup;
+inline QueueHandle_t gCardLookupQ = nullptr;

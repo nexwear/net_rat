@@ -145,15 +145,23 @@ async function ensureCardRegistered(cardUid) {
     return { ...rows[0], newlyRegistered: false };
   }
 
-  const { rows: next } = await query('SELECT COALESCE(MAX(card_number), 0) + 1 AS next FROM cards');
-  const num = next[0].next;
+  // Atomic allocation via sequence; ON CONFLICT covers two requests racing to
+  // register the same new UID (the loser gets no row back and re-reads it).
   const { rows: ins } = await query(
     `INSERT INTO cards (uid, family, status, card_number)
-     VALUES ($1, 'UNKNOWN', 'AVAILABLE', $2)
+     VALUES ($1, 'UNKNOWN', 'AVAILABLE', nextval('cards_card_number_seq'))
+     ON CONFLICT (uid) DO NOTHING
      RETURNING uid, card_number, label, status, current_bundle_id`,
-    [uid, num]
+    [uid]
   );
-  return { ...ins[0], newlyRegistered: true };
+  if (ins.length > 0) {
+    return { ...ins[0], newlyRegistered: true };
+  }
+  const { rows: raced } = await query(
+    'SELECT uid, card_number, label, status, current_bundle_id FROM cards WHERE uid = $1',
+    [uid]
+  );
+  return raced.length > 0 ? { ...raced[0], newlyRegistered: false } : null;
 }
 
 /** Lookup only — never inserts (bundle assign / card lookup UI). */

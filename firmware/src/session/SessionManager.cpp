@@ -185,10 +185,9 @@ void SessionManager::emit(TelemetryType type, ScanKind scanKind, CloseReason rea
   TelemetryEvent ev{};
   ev.type = type;
   generateUuid(ev.eventId);
+  // Sequence is persisted by NetTask on the heartbeat cadence — never write NVS
+  // from this counting path (flash writes stall both cores' cache).
   ev.seq = ++(*_seqCounter);
-  if ((_seqCounter != nullptr) && (*_seqCounter % 32 == 0)) {
-    ConfigStore::saveSeq(*_seqCounter);
-  }
   if (cardUidOverride && cardUidOverride[0] != '\0') {
     strncpy(ev.cardUid, cardUidOverride, sizeof(ev.cardUid) - 1);
   } else {
@@ -274,9 +273,11 @@ void SessionManager::openSession(const char* cardUid, ScanKind kind) {
   _lastReportedCycle = cycleCount();
   gSessionOpen.store(true);
 
-  strncpy(gCardLookup.cardUid, cardUid, sizeof(gCardLookup.cardUid) - 1);
-  gCardLookup.cardUid[sizeof(gCardLookup.cardUid) - 1] = '\0';
-  gCardLookup.pending.store(true);
+  if (gCardLookupQ) {
+    CardLookupMsg msg{};
+    strncpy(msg.cardUid, cardUid, sizeof(msg.cardUid) - 1);
+    xQueueOverwrite(gCardLookupQ, &msg);  // latest tap wins; held until NetTask online
+  }
 
   if (_buzzer) _buzzer->play(BuzzPattern::TAP_IN);
 

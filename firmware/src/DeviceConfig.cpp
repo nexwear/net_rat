@@ -1,14 +1,37 @@
 #include "DeviceConfig.h"
 #include <ArduinoJson.h>
 #include <WiFi.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 namespace {
 constexpr const char* kNs = "cfg";
+
+// All NVS access is serialized through one recursive mutex so concurrent writers
+// (NetTask seq/opAck/OTA, loopTask SerialCfg) never overlap a flash transaction
+// or interleave a multi-key save(). Recursive because commitPendingFwVersion()
+// calls save() while already holding it.
+SemaphoreHandle_t gNvsMutex = nullptr;
+
+struct NvsLock {
+  NvsLock() {
+    if (gNvsMutex) xSemaphoreTakeRecursive(gNvsMutex, portMAX_DELAY);
+  }
+  ~NvsLock() {
+    if (gNvsMutex) xSemaphoreGiveRecursive(gNvsMutex);
+  }
+};
 
 bool getBool(Preferences& prefs, const char* key, bool fallback) {
   return prefs.isKey(key) ? prefs.getBool(key) : fallback;
 }
 }  // namespace
+
+void ConfigStore::initMutex() {
+  if (!gNvsMutex) {
+    gNvsMutex = xSemaphoreCreateRecursiveMutex();
+  }
+}
 
 String ConfigStore::chipId() {
   uint64_t mac = ESP.getEfuseMac();
@@ -18,6 +41,7 @@ String ConfigStore::chipId() {
 }
 
 bool ConfigStore::load(DeviceConfig& out) {
+  NvsLock lock;
   Preferences prefs;
   if (!prefs.begin(kNs, true)) {
     out.valid = false;
@@ -59,6 +83,7 @@ bool ConfigStore::load(DeviceConfig& out) {
 }
 
 bool ConfigStore::save(const DeviceConfig& cfg) {
+  NvsLock lock;
   Preferences prefs;
   if (!prefs.begin(kNs, false)) {
     return false;
@@ -90,6 +115,7 @@ bool ConfigStore::save(const DeviceConfig& cfg) {
 }
 
 void ConfigStore::wipe() {
+  NvsLock lock;
   Preferences prefs;
   if (prefs.begin(kNs, false)) {
     prefs.clear();
@@ -98,6 +124,7 @@ void ConfigStore::wipe() {
 }
 
 bool ConfigStore::loadSeq(uint32_t& seq) {
+  NvsLock lock;
   Preferences prefs;
   if (!prefs.begin(kNs, true)) {
     seq = 0;
@@ -109,6 +136,7 @@ bool ConfigStore::loadSeq(uint32_t& seq) {
 }
 
 void ConfigStore::saveSeq(uint32_t seq) {
+  NvsLock lock;
   Preferences prefs;
   if (prefs.begin(kNs, false)) {
     prefs.putUInt("seq", seq);
@@ -117,6 +145,7 @@ void ConfigStore::saveSeq(uint32_t seq) {
 }
 
 void ConfigStore::setPendingFwVersion(const String& version) {
+  NvsLock lock;
   Preferences prefs;
   if (prefs.begin(kNs, false)) {
     prefs.putString("pendingFw", version);
@@ -125,6 +154,7 @@ void ConfigStore::setPendingFwVersion(const String& version) {
 }
 
 bool ConfigStore::commitPendingFwVersion(DeviceConfig& cfg) {
+  NvsLock lock;
   Preferences prefs;
   if (!prefs.begin(kNs, true)) {
     return false;
@@ -152,6 +182,7 @@ bool ConfigStore::commitPendingFwVersion(DeviceConfig& cfg) {
 }
 
 void ConfigStore::setOpAck() {
+  NvsLock lock;
   Preferences prefs;
   if (prefs.begin(kNs, false)) {
     prefs.putBool("opAck", true);
@@ -160,6 +191,7 @@ void ConfigStore::setOpAck() {
 }
 
 bool ConfigStore::getOpAck() {
+  NvsLock lock;
   Preferences prefs;
   if (!prefs.begin(kNs, true)) {
     return false;
@@ -170,6 +202,7 @@ bool ConfigStore::getOpAck() {
 }
 
 void ConfigStore::clearOpAck() {
+  NvsLock lock;
   Preferences prefs;
   if (prefs.begin(kNs, false)) {
     prefs.remove("opAck");

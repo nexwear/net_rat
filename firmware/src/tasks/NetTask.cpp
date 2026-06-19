@@ -27,6 +27,11 @@ struct NetContext {
 
 bool gOtaReady = false;
 
+// Reboot the node if the sensing/NFC loop stops stamping gSensingAliveMs for this
+// long — recovers a wedged PN5180 that has silently hung SensingTask while
+// heartbeats here keep flowing. Far above any legitimate sensing iteration time.
+constexpr uint32_t SENSING_STALL_MS = 60000;
+
 void setupArduinoOta(const DeviceConfig& cfg) {
   if (gOtaReady) {
     return;
@@ -198,8 +203,9 @@ void netLoop(void* param) {
   }
   syncTime();
 
-  // Last-resort liveness watchdog, scoped to THIS task only (not the sensing /
-  // NFC task, whose watchdog was removed because PN5180 recovery tripped it).
+  // Last-resort liveness watchdog, scoped to THIS task only. The sensing/NFC task
+  // is deliberately NOT on this task-WDT (its PN5180 recovery delays used to trip
+  // it); it is instead covered by the gSensingAliveMs stall-reboot check above.
   // Generous 300s timeout: every network call here is already timeout-bounded,
   // and the longest single iteration (an OTA download) self-limits via its 45s
   // idle timeout — so this only ever fires on a genuine permanent hang, after
@@ -211,11 +217,22 @@ void netLoop(void* param) {
   uint32_t lastHeartbeatMs = 0;
   uint32_t lastTimeSyncMs = millis();
   uint32_t bootMs = millis();
+  uint32_t lastSavedSeq = ctx->seqCounter ? *ctx->seqCounter : 0;
   bool bootSyncDone = false;
   bool sessionResumeDone = false;
   for (;;) {
     esp_task_wdt_reset();
     wifi.loop();
+
+    // Sensing-loop liveness watchdog: a wedged PN5180 hangs SensingTask silently
+    // (it yields while stalled, so the task-WDT/idle is still fed). Reboot here.
+    const uint32_t sensingAlive = gSensingAliveMs.load();
+    if (sensingAlive != 0 && (millis() - sensingAlive) > SENSING_STALL_MS) {
+      Serial.printf("[WDT] SensingTask stalled %lus — rebooting\n",
+                    static_cast<unsigned long>((millis() - sensingAlive) / 1000));
+      Serial.flush();
+      ESP.restart();
+    }
 
     // Keep retrying NTP until the clock is valid (e.g. internet arrived after
     // boot). Non-blocking: configTime() kicks off SNTP, success is detected on a
@@ -301,6 +318,17 @@ void netLoop(void* param) {
       sender.sendHeartbeat(WiFi.RSSI(), now / 1000, depth, flags, &hbResp);
       lastHeartbeatMs = now;
 
+      // Persist the event sequence here (single NVS owner, off the sensing hot
+      // path — it used to be an NVS write every 32 events inside emit()). Keeps
+      // the server dedup window valid across reboots without stalling counting.
+      if (ctx->seqCounter) {
+        const uint32_t curSeq = *ctx->seqCounter;
+        if (curSeq != lastSavedSeq) {
+          ConfigStore::saveSeq(curSeq);
+          lastSavedSeq = curSeq;
+        }
+      }
+
       if (hbResp.length() > 0) {
         JsonDocument hbDoc;
         if (deserializeJson(hbDoc, hbResp) == DeserializationError::Ok) {
@@ -317,13 +345,13 @@ void netLoop(void* param) {
 
     ota.handle(wifi.isConnected(), gSessionOpen.load());
 
-    if (gCardLookup.pending.exchange(false) && wifi.isConnected()) {
-      // Snapshot the shared UID locally before the (millisecond-scale) HTTP call
-      // so a concurrent tap on the sensing task can't tear the buffer mid-read.
-      char uid[sizeof(gCardLookup.cardUid)];
-      strncpy(uid, gCardLookup.cardUid, sizeof(uid) - 1);
-      uid[sizeof(uid) - 1] = '\0';
-      fetchCardDeclared(ctx->cfg, ctx->commandQ, uid);
+    if (wifi.isConnected() && gCardLookupQ) {
+      // Race-free hand-off via a length-1 queue; the request stays queued while
+      // offline, so a tap during an outage still gets its declared/ppp on reconnect.
+      CardLookupMsg lookup{};
+      if (xQueueReceive(gCardLookupQ, &lookup, 0) == pdTRUE) {
+        fetchCardDeclared(ctx->cfg, ctx->commandQ, lookup.cardUid);
+      }
     }
 
     vTaskDelay(pdMS_TO_TICKS(50));

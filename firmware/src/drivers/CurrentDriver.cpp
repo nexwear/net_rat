@@ -8,8 +8,12 @@ CurrentDriver::CurrentDriver(uint8_t adcPin) : _pin(adcPin) {}
 void CurrentDriver::begin() {
   analogSetPinAttenuation(_pin, ADC_11db);  // ~0–3.1 V usable input range
   analogReadResolution(12);
-  // Dedicated sampler on core 0, low priority — decoupled from the counting loop.
-  if (xTaskCreatePinnedToCore(taskTrampoline, "CurSense", 4096, this, 1, &_task, 0) != pdPASS) {
+  // Dedicated sampler pinned to core 1 (APP_CPU), low priority. Kept OFF core 0
+  // because the WiFi/lwIP stack lives there and this ~80%-duty ADC RMS loop was
+  // contending with it (jittery amps + WiFi instability). SensingTask (prio 5)
+  // still preempts it on core 1, so counting is unaffected. (DMA continuous-ADC
+  // is the follow-up that removes the busy-duty entirely.)
+  if (xTaskCreatePinnedToCore(taskTrampoline, "CurSense", 4096, this, 1, &_task, 1) != pdPASS) {
     _task = nullptr;
     Serial.println("[CUR] sampler task create failed — current reads disabled");
   }
