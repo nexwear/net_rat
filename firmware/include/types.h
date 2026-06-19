@@ -4,7 +4,7 @@
 #include <cstdint>
 
 enum class ModuleType : uint8_t { MOD_INPUT, OUTPUT_1, OUTPUT_2, ADMIN };
-enum class DriverId : uint8_t { HORSESHOE, CURRENT, HALL, PRESS };
+enum class DriverId : uint8_t { HORSESHOE, CURRENT, HALL, PRESS, FUSION };
 enum class NodeState : uint8_t { PROVISIONING, ACTIVE, REPROVISIONING };
 enum class CloseReason : uint8_t { NEXT_TAP, TAP_OUT, QUANTITY, TIMEOUT, SHIFT_END };
 enum class TelemetryType : uint8_t {

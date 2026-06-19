@@ -45,7 +45,7 @@ class SessionManager {
   uint32_t _unassignedPass = 0;
   uint32_t _unassignedCycle = 0;
   uint32_t _lastUnassignedEmitMs = 0;
-  Baseline _baseline[4]{};
+  Baseline _baseline[5]{};
 
   uint32_t deltaFor(DriverId id) const;
   uint32_t passCount() const;

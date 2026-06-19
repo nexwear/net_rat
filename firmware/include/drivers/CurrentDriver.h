@@ -34,10 +34,9 @@ class CurrentDriver : public CounterDriver {
   TaskHandle_t _task = nullptr;
   bool _running = false;
 
-  // Each measurement integrates over WINDOW_MS of mains: 200 ms = 10 cycles @
-  // 50 Hz (or 12 @ 60 Hz), which makes the RMS independent of phase/aliasing.
-  static constexpr uint32_t WINDOW_MS = 200;
-  static constexpr uint32_t REST_MS = 250;       // idle gap between measurements
+  // Each measurement integrates over WINDOW_MS of mains: 40 ms ≈ 2 cycles @ 50 Hz.
+  static constexpr uint32_t WINDOW_MS = 40;
+  static constexpr uint32_t REST_MS = 10;        // ~20 Hz amp stream for INPUT fusion
   static constexpr float NOISE_FLOOR_A = 0.10f;  // below this we report 0 A
   // Machine on/off run counting (diagnostics via total(); not piece counting).
   static constexpr float RUN_ON_A = 0.80f;

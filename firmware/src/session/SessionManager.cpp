@@ -34,14 +34,17 @@ uint32_t SessionManager::quantumEstimate() const {
   return static_cast<uint32_t>((rot / _ppp) + 0.5f);
 }
 
-// count_pass = pieces. For the press it is the confirmed press cycles (ground
-// truth). For INPUT / OUTPUT_1 it is a fusion: whichever of the windowed
-// horseshoe groups (good when the worker lifts) or the rotation-quantum
-// estimate (good for continuous feeders, once PPP is calibrated) is larger.
+// count_pass = pieces. INPUT uses current+IR fusion; OUTPUT_1 uses horseshoe
+// groups or hall/ppp estimate; OUTPUT_2 uses press cycles.
 uint32_t SessionManager::passCount() const {
   ModuleType mt = moduleTypeFromString(_cfg.moduleType);
   if (mt == ModuleType::OUTPUT_2) {
     return deltaFor(DriverId::PRESS);
+  }
+  if (mt == ModuleType::MOD_INPUT) {
+    const uint32_t fused = deltaFor(DriverId::FUSION);
+    const uint32_t groups = horseshoeGroups();
+    return fused > groups ? fused : groups;
   }
   const uint32_t groups = horseshoeGroups();
   const uint32_t est = quantumEstimate();
@@ -55,6 +58,9 @@ uint32_t SessionManager::cycleCount() const {
   ModuleType mt = moduleTypeFromString(_cfg.moduleType);
   if (mt == ModuleType::OUTPUT_2) {
     return 0;
+  }
+  if (mt == ModuleType::MOD_INPUT) {
+    return deltaFor(DriverId::CURRENT);
   }
   return rotationDelta();
 }
@@ -117,6 +123,10 @@ void SessionManager::adjustBaselinesForResume(uint32_t targetPass, uint32_t targ
       _baseline[idx].value = total >= targetCycle ? total - targetCycle : 0;
     } else if (mt != ModuleType::OUTPUT_2 && d->id() == DriverId::HORSESHOE) {
       _baseline[idx].value = total >= targetPass ? total - targetPass : 0;
+    } else if (mt == ModuleType::MOD_INPUT && d->id() == DriverId::FUSION) {
+      _baseline[idx].value = total >= targetPass ? total - targetPass : 0;
+    } else if (mt == ModuleType::MOD_INPUT && d->id() == DriverId::CURRENT) {
+      _baseline[idx].value = total >= targetCycle ? total - targetCycle : 0;
     } else {
       _baseline[idx].value = total;
     }

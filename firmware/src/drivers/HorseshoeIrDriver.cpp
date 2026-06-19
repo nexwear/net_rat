@@ -20,6 +20,15 @@ void HorseshoeIrDriver::registerBreak() {
   _lastBreakMs = now;
 }
 
+bool HorseshoeIrDriver::consumeLiftEvent(uint32_t& atMs) {
+  if (!_pendingLift) {
+    return false;
+  }
+  _pendingLift = false;
+  atMs = _pendingLiftMs;
+  return true;
+}
+
 void HorseshoeIrDriver::poll() {
   const bool raw = digitalRead(_pin);
   const uint32_t now = millis();
@@ -46,7 +55,12 @@ void HorseshoeIrDriver::poll() {
       break;
     case State::CONFIRMED:
       if (raw && (now - _stateMs) >= DEBOUNCE_MS) {
-        if ((now - _cycleStartMs) >= MIN_PIECE_MS) {
+        const uint32_t dwell = now - _cycleStartMs;
+        if (dwell >= MIN_BLOCK_MS) {
+          _pendingLift = true;
+          _pendingLiftMs = now;
+        }
+        if (dwell >= MIN_PIECE_MS) {
           registerBreak();
         }
         _state = State::IDLE;

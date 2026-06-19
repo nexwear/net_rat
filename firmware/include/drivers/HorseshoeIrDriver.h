@@ -14,6 +14,8 @@ class HorseshoeIrDriver : public CounterDriver {
   void poll() override;
   uint32_t total() const override { return _groups; }  // windowed piece-groups
   uint32_t rawBreaks() const { return _rawBreaks; }
+  // Beam cleared after a real block — used by INPUT current+IR fusion (no 1 s minimum).
+  bool consumeLiftEvent(uint32_t& atMs);
   DriverId id() const override { return DriverId::HORSESHOE; }
 
  private:
@@ -29,6 +31,8 @@ class HorseshoeIrDriver : public CounterDriver {
   State _state = State::IDLE;
   uint32_t _stateMs = 0;
   bool _lastRaw = true;
+  bool _pendingLift = false;
+  uint32_t _pendingLiftMs = 0;
 
   static constexpr uint32_t DEBOUNCE_MS = 30;
   static constexpr uint32_t MIN_BLOCK_MS = 150;
