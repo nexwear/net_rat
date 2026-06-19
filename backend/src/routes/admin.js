@@ -715,7 +715,7 @@ router.post('/bundles/:bundleId/release-card', async (req, res) => {
   }
 });
 
-// Wipe operational data (cards, nodes, bundles, scans). SUPER_ADMIN only.
+// Wipe operational data but keep registered nodes (devices), lines, users, and OTA releases.
 router.post('/db/clear', async (req, res) => {
   try {
     if (req.user?.role !== 'SUPER_ADMIN') {
@@ -736,13 +736,22 @@ router.post('/db/clear', async (req, res) => {
         device_tokens,
         ppp_training_marks,
         ppp_training,
+        ppp_calibration,
         bundles,
-        cards,
-        nodes,
-        ppp_calibration
+        cards
       RESTART IDENTITY CASCADE
     `);
-    res.json({ ok: true, cleared: true });
+    await query(`
+      TRUNCATE TABLE contractors, garment_models RESTART IDENTITY CASCADE
+    `);
+    await query(`ALTER SEQUENCE IF EXISTS cards_card_number_seq RESTART WITH 1`);
+    await query(`
+      UPDATE nodes SET
+        flags = COALESCE(flags, '{}'::jsonb) - 'lastSeq',
+        pending_op = NULL,
+        pending_op_at = NULL
+    `);
+    res.json({ ok: true, cleared: true, nodesPreserved: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
