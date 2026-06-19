@@ -2,8 +2,7 @@
 
 #include "drivers/CounterDriver.h"
 
-// OUTPUT_2 — pin 27 beam-break IR (pull-up, LOW = object present).
-// One piece when object comes (stable LOW) then goes (stable HIGH).
+// OUTPUT_2 — pin 27 active-HIGH sensor. +1 on each stable rising edge (LOW → HIGH).
 class PressCycleDriver : public CounterDriver {
  public:
   explicit PressCycleDriver(uint8_t pressPin);
@@ -13,18 +12,12 @@ class PressCycleDriver : public CounterDriver {
   DriverId id() const override { return DriverId::PRESS; }
 
  private:
-  enum class State : uint8_t { CLEAR, PRESENT };
-
   uint8_t _pressPin;
   uint32_t _total = 0;
-  State _state = State::CLEAR;
-  uint32_t _presentStartMs = 0;
 
   bool _raw = false;
   bool _stable = false;
   uint32_t _edgeMs = 0;
 
   static constexpr uint32_t DEBOUNCE_MS = 40;
-  // Reject sub-100 ms blips; any real come-and-go cycle counts as one.
-  static constexpr uint32_t MIN_PRESENT_MS = 100;
 };

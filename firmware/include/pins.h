@@ -18,7 +18,7 @@ struct PinMap {
   int8_t currentAdc;   // SCT013 current sensor ADC (INPUT pin 34 only)
   int8_t hall;         // A3144 hall-effect sensor  (INPUT pin 26, OUTPUT_1 pin 26)
   int8_t irCloth;      // unused (legacy OUTPUT_2 garment sensor)
-  int8_t irPress;      // OUTPUT_2 object sensor (pin 27, same beam-break as horseshoe)
+  int8_t irPress;      // OUTPUT_2 sensor pin 27 (active-HIGH, count on rising edge)
 
   // Shared peripherals
   int8_t  buzzer;       // passive buzzer / piezo (pin 15, all modules)
@@ -66,7 +66,7 @@ inline PinMap forModule(ModuleType type) {
       break;
 
     case ModuleType::OUTPUT_2:
-      // Beam-break IR on pin 27 — object blocks beam (LOW), same as horseshoe stations.
+      // Pin 27 active-HIGH — count +1 on each stable rising edge.
       p.irPress = 27;
       break;
 

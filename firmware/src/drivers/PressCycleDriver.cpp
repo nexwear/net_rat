@@ -4,41 +4,28 @@
 PressCycleDriver::PressCycleDriver(uint8_t pressPin) : _pressPin(pressPin) {}
 
 void PressCycleDriver::begin() {
-  // Same beam-break wiring as horseshoe IR on pin 27: pull-up, LOW = object blocks beam.
-  pinMode(_pressPin, INPUT_PULLUP);
-  _state = State::CLEAR;
+  pinMode(_pressPin, INPUT_PULLDOWN);
   _raw = _stable = false;
   _edgeMs = millis();
 }
 
 void PressCycleDriver::poll() {
   const uint32_t now = millis();
-  const bool present = digitalRead(_pressPin) == LOW;
+  const bool high = digitalRead(_pressPin) == HIGH;
 
-  if (present != _raw) {
-    _raw = present;
+  if (high != _raw) {
+    _raw = high;
     _edgeMs = now;
   }
+
+  bool nextStable = _stable;
   if ((now - _edgeMs) >= DEBOUNCE_MS) {
-    _stable = _raw;
+    nextStable = _raw;
   }
 
-  switch (_state) {
-    case State::CLEAR:
-      if (_stable) {
-        _state = State::PRESENT;
-        _presentStartMs = now;
-      }
-      break;
-
-    case State::PRESENT:
-      if (!_stable) {
-        if ((now - _presentStartMs) >= MIN_PRESENT_MS) {
-          _total++;
-          Serial.printf("[PRESS] piece #%lu\n", static_cast<unsigned long>(_total));
-        }
-        _state = State::CLEAR;
-      }
-      break;
+  if (!_stable && nextStable) {
+    _total++;
+    Serial.printf("[PRESS] piece #%lu (pin high)\n", static_cast<unsigned long>(_total));
   }
+  _stable = nextStable;
 }
