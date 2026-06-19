@@ -2,10 +2,8 @@
 
 #include "drivers/CounterDriver.h"
 
-// Heat-press station (OUTPUT_2) — single active-HIGH IR on the press stroke.
-//
-// pressPin reads HIGH when the press head is down. One piece is counted when
-// the press is held for at least MIN_DWELL_MS, then lifts. Momentary taps are ignored.
+// OUTPUT_2 — single active-HIGH IR on pin 27 (object / press present → HIGH).
+// One piece when the object comes (stable HIGH) then goes (stable LOW).
 class PressCycleDriver : public CounterDriver {
  public:
   explicit PressCycleDriver(uint8_t pressPin);
@@ -15,17 +13,18 @@ class PressCycleDriver : public CounterDriver {
   DriverId id() const override { return DriverId::PRESS; }
 
  private:
-  enum class State : uint8_t { IDLE, PRESSING };
+  enum class State : uint8_t { CLEAR, PRESENT };
 
   uint8_t _pressPin;
   uint32_t _total = 0;
-  State _state = State::IDLE;
-  uint32_t _pressStartMs = 0;
+  State _state = State::CLEAR;
+  uint32_t _presentStartMs = 0;
 
-  bool _pressRaw = false;
-  bool _pressStable = false;
-  uint32_t _pressEdgeMs = 0;
+  bool _raw = false;
+  bool _stable = false;
+  uint32_t _edgeMs = 0;
 
   static constexpr uint32_t DEBOUNCE_MS = 40;
-  static constexpr uint32_t MIN_DWELL_MS = 1000;
+  // Reject sub-100 ms blips; any real come-and-go cycle counts as one.
+  static constexpr uint32_t MIN_PRESENT_MS = 100;
 };

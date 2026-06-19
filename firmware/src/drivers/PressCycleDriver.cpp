@@ -4,37 +4,37 @@ PressCycleDriver::PressCycleDriver(uint8_t pressPin) : _pressPin(pressPin) {}
 
 void PressCycleDriver::begin() {
   pinMode(_pressPin, INPUT_PULLDOWN);
-  _state = State::IDLE;
-  _pressRaw = _pressStable = false;
-  _pressEdgeMs = millis();
+  _state = State::CLEAR;
+  _raw = _stable = false;
+  _edgeMs = millis();
 }
 
 void PressCycleDriver::poll() {
   const uint32_t now = millis();
-  const bool pressNow = digitalRead(_pressPin) == HIGH;
+  const bool seen = digitalRead(_pressPin) == HIGH;
 
-  if (pressNow != _pressRaw) {
-    _pressRaw = pressNow;
-    _pressEdgeMs = now;
+  if (seen != _raw) {
+    _raw = seen;
+    _edgeMs = now;
   }
-  if ((now - _pressEdgeMs) >= DEBOUNCE_MS) {
-    _pressStable = _pressRaw;
+  if ((now - _edgeMs) >= DEBOUNCE_MS) {
+    _stable = _raw;
   }
 
   switch (_state) {
-    case State::IDLE:
-      if (_pressStable) {
-        _state = State::PRESSING;
-        _pressStartMs = now;
+    case State::CLEAR:
+      if (_stable) {
+        _state = State::PRESENT;
+        _presentStartMs = now;
       }
       break;
 
-    case State::PRESSING:
-      if (!_pressStable) {
-        if ((now - _pressStartMs) >= MIN_DWELL_MS) {
+    case State::PRESENT:
+      if (!_stable) {
+        if ((now - _presentStartMs) >= MIN_PRESENT_MS) {
           _total++;
         }
-        _state = State::IDLE;
+        _state = State::CLEAR;
       }
       break;
   }
