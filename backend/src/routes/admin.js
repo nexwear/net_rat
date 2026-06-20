@@ -113,6 +113,25 @@ router.post('/nodes/:nodeId/reconfig', requirePerm('nodes.config'), async (req, 
   }
 });
 
+router.delete('/nodes/:nodeId', requireSuperAdmin, async (req, res) => {
+  try {
+    const nodeId = req.params.nodeId;
+    await query('DELETE FROM ota_events WHERE node_id = $1', [nodeId]);
+    await query('DELETE FROM scan_events WHERE node_id = $1', [nodeId]);
+    const { rows } = await query(
+      'DELETE FROM nodes WHERE id = $1 RETURNING id, module_type',
+      [nodeId]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'node not found' });
+    }
+    res.json({ ok: true, deleted: rows[0] });
+  } catch (err) {
+    console.error('admin/delete node error', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Dashboard aggregate stats ───────────────────────────────────────────────
 
 router.get('/dashboard/stats', async (_req, res) => {
