@@ -114,7 +114,20 @@ void NfcSubsystem::forceHardwareReset() {
   digitalWrite(_pins.pn5180Rst, LOW);
   delay(15);
   digitalWrite(_pins.pn5180Rst, HIGH);
-  delay(15);
+  // PN5180 asserts BUSY during its internal boot sequence after RST goes HIGH.
+  // Sending SPI commands before BUSY clears causes transceiveCommand to time out
+  // (50 ms cap), leaving the chip unconfigured and BUSY stuck — triggering
+  // another reset 3 s later in a cascade. Wait here for the chip to finish
+  // booting before touching SPI.
+  const uint32_t t0 = millis();
+  while (digitalRead(_pins.pn5180Busy) == HIGH) {
+    if (millis() - t0 > 500) {
+      Serial.println("[NFC] PN5180 BUSY did not clear after hardware reset");
+      _healthy = false;
+      return;
+    }
+    delay(1);
+  }
   gIso14443->begin();
   gIso14443->reset();
   if (gIso15693) {
