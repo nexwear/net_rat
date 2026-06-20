@@ -28,7 +28,9 @@ class SessionManager {
  private:
   struct Baseline {
     bool used = false;
-    uint32_t value = 0;
+    uint32_t value = 0;    // driver.total() snapshot at session start (subtracted)
+    uint32_t offset = 0;   // resumed/cloud count added back, so the reported count
+                           // continues from the cloud value after a reboot/resync
   };
 
   const DeviceConfig& _cfg;

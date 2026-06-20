@@ -13,8 +13,10 @@ uint32_t SessionManager::deltaFor(DriverId id) const {
   for (auto* d : _drivers) {
     if (d && d->id() == id) {
       const uint8_t idx = static_cast<uint8_t>(id);
-      const uint32_t base = _baseline[idx].used ? _baseline[idx].value : 0;
-      return d->total() - base;
+      if (!_baseline[idx].used) return d->total();
+      // (total - snapshot) is this session's new work; + offset continues the
+      // count from the resumed cloud value after a reboot/resync.
+      return d->total() - _baseline[idx].value + _baseline[idx].offset;
     }
   }
   return 0;
@@ -105,29 +107,36 @@ void SessionManager::snapshotBaselines() {
     const uint8_t idx = static_cast<uint8_t>(d->id());
     _baseline[idx].used = true;
     _baseline[idx].value = d->total();
+    _baseline[idx].offset = 0;
   }
 }
 
+// Continue the reported count from the cloud value (targetPass/targetCycle)
+// regardless of where the local sensor totals are. We snapshot the current total
+// (so new work counts from 0) and put the cloud count in the offset. This works
+// after a reboot (totals reset to 0) where the old "baseline = total - target"
+// could not, because an unsigned baseline can't go negative.
 void SessionManager::adjustBaselinesForResume(uint32_t targetPass, uint32_t targetCycle) {
   const ModuleType mt = moduleTypeFromString(_cfg.moduleType);
   for (auto* d : _drivers) {
     if (!d) continue;
     const uint8_t idx = static_cast<uint8_t>(d->id());
-    const uint32_t total = d->total();
+    const DriverId did = d->id();
     _baseline[idx].used = true;
-    if (mt == ModuleType::OUTPUT_2 && d->id() == DriverId::PRESS) {
-      _baseline[idx].value = total >= targetPass ? total - targetPass : 0;
-    } else if (mt != ModuleType::OUTPUT_2 && d->id() == DriverId::HALL) {
-      _baseline[idx].value = total >= targetCycle ? total - targetCycle : 0;
-    } else if (mt != ModuleType::OUTPUT_2 && d->id() == DriverId::HORSESHOE) {
-      _baseline[idx].value = total >= targetPass ? total - targetPass : 0;
-    } else if (mt == ModuleType::MOD_INPUT && d->id() == DriverId::FUSION) {
-      _baseline[idx].value = total >= targetPass ? total - targetPass : 0;
-    } else if (mt == ModuleType::MOD_INPUT && d->id() == DriverId::CURRENT) {
-      _baseline[idx].value = total >= targetCycle ? total - targetCycle : 0;
-    } else {
-      _baseline[idx].value = total;
+    _baseline[idx].value = d->total();  // new work counts from here
+    uint32_t offset = 0;
+    if (mt == ModuleType::OUTPUT_2 && did == DriverId::PRESS) {
+      offset = targetPass;
+    } else if (mt == ModuleType::MOD_INPUT && did == DriverId::FUSION) {
+      offset = targetPass;
+    } else if (mt == ModuleType::MOD_INPUT && did == DriverId::CURRENT) {
+      offset = targetCycle;
+    } else if (mt == ModuleType::OUTPUT_1 && did == DriverId::HORSESHOE) {
+      offset = targetPass;
+    } else if (mt == ModuleType::OUTPUT_1 && did == DriverId::HALL) {
+      offset = targetCycle;
     }
+    _baseline[idx].offset = offset;
   }
 }
 
