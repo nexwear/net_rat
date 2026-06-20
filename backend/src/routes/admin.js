@@ -716,6 +716,7 @@ router.post('/bundles/:bundleId/release-card', async (req, res) => {
 });
 
 // Wipe operational data but keep registered nodes (devices), lines, users, and OTA releases.
+// Optional: { "confirm": "CLEAR", "pruneNodes": true } also deletes all nodes except ADMIN.
 router.post('/db/clear', async (req, res) => {
   try {
     if (req.user?.role !== 'SUPER_ADMIN') {
@@ -751,7 +752,19 @@ router.post('/db/clear', async (req, res) => {
         pending_op = NULL,
         pending_op_at = NULL
     `);
-    res.json({ ok: true, cleared: true, nodesPreserved: true });
+    let pruned = [];
+    if (req.body?.pruneNodes === true) {
+      const { rows } = await query(
+        `DELETE FROM nodes WHERE module_type IS DISTINCT FROM 'ADMIN' RETURNING id, module_type`
+      );
+      pruned = rows;
+    }
+    res.json({
+      ok: true,
+      cleared: true,
+      nodesPreserved: pruned.length === 0,
+      prunedNodes: pruned,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
