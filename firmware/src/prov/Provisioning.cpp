@@ -142,6 +142,7 @@ bool Provisioning::claimDevice(DeviceConfig& cfg, ModuleType hint) {
     Serial.println("[PROV] claim: WiFi not connected");
     return false;
   }
+  delay(1500);  // let the stack settle after SoftAP → STA switch
 
   JsonDocument doc;
   doc["chipId"] = ConfigStore::chipId();
@@ -154,16 +155,28 @@ bool Provisioning::claimDevice(DeviceConfig& cfg, ModuleType hint) {
   HTTPClient http;
   const String url = cfg.serverUrl + "/v1/devices/claim";
   Serial.printf("[PROV] POST %s\n", url.c_str());
-  if (!http.begin(client, url)) {
-    Serial.println("[PROV] claim: http.begin failed");
-    return false;
+
+  int code = -1;
+  String resp;
+  for (uint8_t attempt = 1; attempt <= 3; attempt++) {
+    if (!http.begin(client, url)) {
+      Serial.println("[PROV] claim: http.begin failed");
+      return false;
+    }
+    http.setTimeout(30000);
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("Connection", "close");
+    code = http.POST(body);
+    resp = http.getString();
+    http.end();
+    Serial.printf("[PROV] claim HTTP %d (try %u): %s\n", code, attempt, resp.c_str());
+    if (code >= 200 && code < 300) {
+      break;
+    }
+    if (attempt < 3) {
+      delay(2000);
+    }
   }
-  http.setTimeout(15000);
-  http.addHeader("Content-Type", "application/json");
-  const int code = http.POST(body);
-  const String resp = http.getString();
-  http.end();
-  Serial.printf("[PROV] claim HTTP %d: %s\n", code, resp.c_str());
   if (code < 200 || code >= 300) {
     return false;
   }
@@ -254,9 +267,13 @@ bool Provisioning::handlePortal(DeviceConfig& cfg, ModuleType hint, bool wifiOnl
     return true;
   }
 
+  if (!ConfigStore::savePending(cfg)) {
+    Serial.println("[PROV] warning: could not persist pending config");
+  }
+
   Serial.printf("[PROV] Claiming device at %s\n", cfg.serverUrl.c_str());
   if (!claimDevice(cfg, hint)) {
-    Serial.println("[PROV] Claim failed — is backend running? Windows firewall may block port 4000");
+    Serial.println("[PROV] Claim failed — check WiFi can reach the server URL (saved; will retry on reboot)");
     return false;
   }
   if (!pollUntilApproved(cfg)) {
@@ -264,6 +281,31 @@ bool Provisioning::handlePortal(DeviceConfig& cfg, ModuleType hint, bool wifiOnl
     return false;
   }
   return true;
+}
+
+Provisioning::Result Provisioning::resumeRegistration(DeviceConfig& cfg) {
+  if (!ConfigStore::hasPendingProvision(cfg)) {
+    return Result::FAILED;
+  }
+  const ModuleType hint = moduleTypeFromString(cfg.moduleType.c_str());
+  Serial.printf("[PROV] Resuming registration as %s → %s\n", cfg.moduleType.c_str(),
+                cfg.serverUrl.c_str());
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(WIFI_PS_NONE);
+  WiFi.setAutoReconnect(true);
+  if (!claimDevice(cfg, hint)) {
+    Serial.println("[PROV] Resume claim failed — will retry on next boot");
+    return Result::FAILED;
+  }
+  if (!pollUntilApproved(cfg)) {
+    Serial.println("[PROV] Resume approval poll failed");
+    return Result::FAILED;
+  }
+  cfg.fwVersion = String(FW_VERSION);
+  if (!ConfigStore::save(cfg)) {
+    return Result::FAILED;
+  }
+  return Result::COMPLETE;
 }
 
 Provisioning::Result Provisioning::run(DeviceConfig& cfg, ModuleType hint) {

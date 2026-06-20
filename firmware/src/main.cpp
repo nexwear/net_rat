@@ -23,11 +23,19 @@ void setup() {
   ConfigStore::initMutex();  // serialize all NVS access before any task starts
   ConfigStore::loadSeq(gSeq);
 
-  if (ConfigStore::load(gConfig)) {
+  ConfigStore::load(gConfig);
+  if (gConfig.valid) {
     ConfigStore::commitPendingFwVersion(gConfig);
   }
 
   if (!gConfig.valid) {
+    if (ConfigStore::hasPendingProvision(gConfig)) {
+      gNodeState.store(NodeState::PROVISIONING);
+      if (Provisioning::resumeRegistration(gConfig) == Provisioning::Result::COMPLETE) {
+        ESP.restart();
+      }
+      Serial.println("[PROV] Pending registration failed — opening setup portal");
+    }
     gNodeState.store(NodeState::PROVISIONING);
     Serial.println("[PROV] No valid config — starting SoftAP setup portal");
     Serial.printf("[PROV] Connect to WiFi: %s  password: grewbie-setup\n",

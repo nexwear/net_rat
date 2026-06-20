@@ -114,6 +114,43 @@ bool ConfigStore::save(const DeviceConfig& cfg) {
   return true;
 }
 
+bool ConfigStore::savePending(const DeviceConfig& cfg) {
+  NvsLock lock;
+  Preferences prefs;
+  if (!prefs.begin(kNs, false)) {
+    return false;
+  }
+
+  JsonDocument doc;
+  JsonArray arr = doc.to<JsonArray>();
+  for (const auto& cred : cfg.wifi) {
+    JsonObject item = arr.add<JsonObject>();
+    item["s"] = cred.ssid;
+    item["p"] = cred.pass;
+  }
+  String wifiJson;
+  serializeJson(arr, wifiJson);
+
+  prefs.putString("wifi", wifiJson);
+  prefs.putString("server", cfg.serverUrl);
+  prefs.putString("moduleType", cfg.moduleType);
+  prefs.putString("label", cfg.label);
+  prefs.putString("nodeId", "");
+  prefs.putString("token", "");
+  prefs.putString("lineId", "");
+  prefs.putString("factoryId", "");
+  prefs.putString("fwVersion", cfg.fwVersion.length() ? cfg.fwVersion : String(FW_VERSION));
+  prefs.putUShort("otaHrs", cfg.otaHrs);
+  prefs.putBool("provDone", false);
+  prefs.end();
+  return true;
+}
+
+bool ConfigStore::hasPendingProvision(const DeviceConfig& cfg) {
+  return !cfg.valid && cfg.wifi.size() > 0 && cfg.serverUrl.length() > 0 &&
+         cfg.moduleType.length() > 0;
+}
+
 void ConfigStore::wipe() {
   NvsLock lock;
   Preferences prefs;

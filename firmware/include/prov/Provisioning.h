@@ -7,6 +7,8 @@ class Provisioning {
   enum class Result { RUNNING, COMPLETE, FAILED };
 
   static Result run(DeviceConfig& cfg, ModuleType hint = ModuleType::MOD_INPUT);
+  /** Finish claim + approval using WiFi creds already in NVS (provDone=false). */
+  static Result resumeRegistration(DeviceConfig& cfg);
   /** SoftAP portal — update WiFi + server URL only; keeps nodeId/token. */
   static Result runWifiOnly(DeviceConfig& cfg, ModuleType hint = ModuleType::MOD_INPUT);
   static void factoryReset();

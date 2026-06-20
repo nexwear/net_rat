@@ -29,6 +29,9 @@ class ConfigStore {
   static void initMutex();
   static bool load(DeviceConfig& out);
   static bool save(const DeviceConfig& cfg);
+  /** Persist WiFi/server/module before claim completes (provDone=false). */
+  static bool savePending(const DeviceConfig& cfg);
+  static bool hasPendingProvision(const DeviceConfig& cfg);
   static void wipe();
   static bool loadSeq(uint32_t& seq);
   static void saveSeq(uint32_t seq);
