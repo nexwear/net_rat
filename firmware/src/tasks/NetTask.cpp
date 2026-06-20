@@ -208,7 +208,7 @@ void tryResumeActiveSession(const DeviceConfig& cfg, QueueHandle_t commandQ) {
     bool tsValid = false;
     const uint64_t nowMs = epochMsNow(&tsValid);
     if (tsValid && nowMs > cmd.resumeStartEpochMs &&
-        (nowMs - cmd.resumeStartEpochMs) > (45ULL * 60ULL * 1000ULL)) {
+        (nowMs - cmd.resumeStartEpochMs) > (7ULL * 24ULL * 60ULL * 60ULL * 1000ULL)) {
       Serial.println("[NET] stale cloud session ignored — tap card to start fresh");
       return;
     }

@@ -46,6 +46,7 @@ class HorseshoeIrDriver : public CounterDriver {
   OutState _outState = OutState::CLEAR;
   uint32_t _outBlockStartMs = 0;
   uint32_t _outClearStartMs = 0;
+  uint32_t _outLastEdgeMs = 0;   // DIAGNOSTIC: time of last stable beam edge
   bool _outBlockQualified = false;
 
   static constexpr uint32_t DEBOUNCE_MS = 30;

@@ -75,6 +75,9 @@ void apply(JsonObjectConst op) {
   } else if (strcmp(type, "FORCE_OTA_CHECK") == 0) {
     Serial.println("[CFG] FORCE_OTA_CHECK — triggering immediate OTA check");
     gForceOtaCheck.store(true);
+    // Ack so the server clears the pending op — without this the op stays pending
+    // and re-fires on every heartbeat (the FORCE_OTA_CHECK spam loop).
+    ConfigStore::setOpAck();
 
   } else {
     Serial.printf("[CFG] unknown op type: %s, ignoring\n", type);

@@ -850,7 +850,10 @@ async function getActiveSessionForNode(node) {
   if (!rows[0]?.card_uid) return null;
 
   const s = rows[0];
-  const SESSION_OPEN_MAX_MS = 45 * 60 * 1000;
+  // Sessions/bundles may stay open for days (a card can sit on a bundle across
+  // shifts). Only treat one as abandoned after a full week, matching the node's
+  // SESSION_TIMEOUT_MS. Override with SESSION_OPEN_MAX_MS env if needed.
+  const SESSION_OPEN_MAX_MS = Number(process.env.SESSION_OPEN_MAX_MS) || 7 * 24 * 60 * 60 * 1000;
   const ageMs = Date.now() - new Date(s.start_ts).getTime();
   if (ageMs > SESSION_OPEN_MAX_MS) {
     await query(

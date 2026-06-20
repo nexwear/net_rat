@@ -85,7 +85,10 @@ class SessionManager {
 
   static constexpr uint32_t TAP_OUT_WINDOW_MS = 2500;
   static constexpr uint32_t SESSION_UPDATE_MS = 60000;  // keepalive only; counts emit on change
-  static constexpr uint32_t SESSION_TIMEOUT_MS = 45UL * 60UL * 1000UL;
+  // Sessions/bundles can stay open for days (a worker may keep one card on a
+  // bundle across shifts). Only auto-close after a full week of no tap-out, as a
+  // last-resort cleanup for a card that was simply abandoned.
+  static constexpr uint32_t SESSION_TIMEOUT_MS = 7UL * 24UL * 60UL * 60UL * 1000UL;
   static constexpr uint32_t UNASSIGNED_EMIT_MS = 30000;
   static constexpr uint32_t DELTA_EMIT_THRESHOLD = 1;
   static constexpr uint32_t QTY_GRACE_MS = 3000;

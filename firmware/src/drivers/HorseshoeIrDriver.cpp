@@ -92,11 +92,18 @@ void HorseshoeIrDriver::pollOutputStrict() {
   }
 
   if ((now - _outCandidateMs) >= OUT_GLITCH_MS && blocked != _outStableBlocked) {
+    const uint32_t sincePrevEdge = _outLastEdgeMs ? (now - _outLastEdgeMs) : 0;
+    _outLastEdgeMs = now;
     _outStableBlocked = blocked;
 
     if (blocked) {
+      Serial.printf("[OUT-IR] block  (prior clear %lums)\n",
+                    static_cast<unsigned long>(sincePrevEdge));
       if (_outState == OutState::CLEARING && (now - _outClearStartMs) < OUT_MIN_CLEAR_MS) {
         // Clear ended early — restart block timing; do not count.
+        Serial.printf("[OUT-IR] DROP qualified piece — clear only %lums < %lums (next piece too soon)\n",
+                      static_cast<unsigned long>(now - _outClearStartMs),
+                      static_cast<unsigned long>(OUT_MIN_CLEAR_MS));
         _outBlockStartMs = now;
         _outBlockQualified = false;
         _outState = OutState::BLOCKED;
@@ -109,6 +116,8 @@ void HorseshoeIrDriver::pollOutputStrict() {
     }
 
     // Stable clear (beam restored).
+    Serial.printf("[OUT-IR] clear  (blocked %lums, qualified=%d)\n",
+                  static_cast<unsigned long>(sincePrevEdge), _outBlockQualified ? 1 : 0);
     if (_outState == OutState::BLOCKED && _outBlockQualified) {
       _outClearStartMs = now;
       _outState = OutState::CLEARING;
@@ -122,6 +131,8 @@ void HorseshoeIrDriver::pollOutputStrict() {
   if (_outState == OutState::BLOCKED && !_outBlockQualified) {
     if ((now - _outBlockStartMs) >= OUT_MIN_BLOCK_MS) {
       _outBlockQualified = true;
+      Serial.printf("[OUT-IR] qualified after %lums blocked\n",
+                    static_cast<unsigned long>(now - _outBlockStartMs));
     }
     return;
   }
@@ -129,6 +140,7 @@ void HorseshoeIrDriver::pollOutputStrict() {
   if (_outState == OutState::CLEARING && _outBlockQualified) {
     if ((now - _outClearStartMs) >= OUT_MIN_CLEAR_MS) {
       registerBreak();
+      Serial.printf("[OUT-IR] piece #%lu COUNTED\n", static_cast<unsigned long>(_groups));
       _outBlockQualified = false;
       _outState = OutState::CLEAR;
     }
