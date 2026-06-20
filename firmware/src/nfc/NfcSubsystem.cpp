@@ -92,7 +92,12 @@ bool NfcSubsystem::ensureBusReady() {
   const uint32_t start = millis();
   while (digitalRead(_pins.pn5180Busy) == HIGH) {
     if ((millis() - start) > BUSY_STUCK_MS) {
-      Serial.println("[NFC] BUSY stuck — hardware reset");
+      const uint32_t now = millis();
+      if ((now - _lastBusyResetMs) < BUSY_RESET_COOLDOWN_MS) {
+        return false;
+      }
+      _lastBusyResetMs = now;
+      Serial.printf("[NFC] BUSY stuck (pin=%d) — hardware reset\n", _pins.pn5180Busy);
       forceHardwareReset();
       return false;
     }
@@ -105,16 +110,19 @@ void NfcSubsystem::forceHardwareReset() {
   if (_pins.pn5180Rst < 0 || !gIso14443) {
     return;
   }
+  pinMode(_pins.pn5180Rst, OUTPUT);
   digitalWrite(_pins.pn5180Rst, LOW);
   delay(15);
   digitalWrite(_pins.pn5180Rst, HIGH);
   delay(15);
+  gIso14443->begin();
   gIso14443->reset();
   if (gIso15693) {
     gIso15693->begin();
   }
   _failStreak = 0;
   _healthy = pn5180Responding(gIso14443);
+  _lastPollMs = millis() + 200;  // brief RF settle before next poll
 }
 
 void NfcSubsystem::recoverReader(const char* reason) {

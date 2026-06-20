@@ -557,7 +557,12 @@ void PN5180::reset() {
   digitalWrite(PN5180_RST, HIGH); // 2ms to ramp up required
   delay(10);
 
-  while (0 == (IDLE_IRQ_STAT & getIRQStatus())); // wait for system to start up
+  uint32_t t0 = millis();
+  while (0 == (IDLE_IRQ_STAT & getIRQStatus())) {
+    if (millis() - t0 > PN5180_BUSY_TIMEOUT_MS) {
+      break;
+    }
+  }
 
   clearIRQStatus(0xffffffff); // clear all flags
 }
