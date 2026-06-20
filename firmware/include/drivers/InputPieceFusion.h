@@ -47,9 +47,9 @@ class InputPieceFusion : public CounterDriver {
   static constexpr float RUN_OFF_A = 2.5f;   // leaving the burst
   static constexpr float IDLE_MIN_A = 2.0f;  // back in the idle band ⇒ piece ended
   static constexpr float MIN_PEAK_A = 5.0f;  // a real piece peaks far above idle
-  static constexpr uint32_t MIN_OFF_MS = 250;   // idle band must hold to end a piece
+  static constexpr uint32_t MIN_OFF_MS = 150;   // idle band must hold to end a piece
   static constexpr uint32_t MIN_RUN_MS = 120;
-  static constexpr uint32_t PIECE_COOLDOWN_MS = 900;
+  static constexpr uint32_t PIECE_COOLDOWN_MS = 700;
   static constexpr uint32_t LOW_HOLD_MAX_MS = 20000;
-  static constexpr uint32_t AMPS_LOG_MS = 250;  // throttle for the live current log
+  static constexpr uint32_t AMPS_LOG_MS = 50;   // DIAGNOSTIC: full-rate current log
 };
