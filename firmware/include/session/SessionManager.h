@@ -64,6 +64,10 @@ class SessionManager {
   float liveAmps() const;
   void snapshotBaselines();
   void adjustBaselinesForResume(uint32_t targetPass, uint32_t targetCycle);
+  // Raise one driver's reported delta up to `target` if it is currently below it.
+  // Never lowers a live count — the cloud is a recovery floor after a reboot, not
+  // an authority that can roll back local progress.
+  void raiseBaseline(DriverId id, uint32_t target);
   void openSession(const char* cardUid, ScanKind kind);
   void closeSession(CloseReason reason, ScanKind scanKind = ScanKind::AUTO_CLOSE);
   void emit(TelemetryType type, ScanKind scanKind = ScanKind::TAP_IN, CloseReason reason = CloseReason::TIMEOUT,

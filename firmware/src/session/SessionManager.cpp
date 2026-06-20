@@ -111,32 +111,44 @@ void SessionManager::snapshotBaselines() {
   }
 }
 
-// Continue the reported count from the cloud value (targetPass/targetCycle)
-// regardless of where the local sensor totals are. We snapshot the current total
-// (so new work counts from 0) and put the cloud count in the offset. This works
-// after a reboot (totals reset to 0) where the old "baseline = total - target"
-// could not, because an unsigned baseline can't go negative.
+void SessionManager::raiseBaseline(DriverId id, uint32_t target) {
+  for (auto* d : _drivers) {
+    if (!d || d->id() != id) continue;
+    const uint8_t idx = static_cast<uint8_t>(id);
+    if (!_baseline[idx].used) {
+      _baseline[idx].used = true;
+      _baseline[idx].value = d->total();
+      _baseline[idx].offset = 0;
+    }
+    const uint32_t current = d->total() - _baseline[idx].value + _baseline[idx].offset;
+    if (target > current) {
+      // Re-anchor: new work counts from the current total, and the reported count
+      // continues from `target`. Only ever raises — a stale/lower cloud value can
+      // never drag a live count down.
+      _baseline[idx].value = d->total();
+      _baseline[idx].offset = target;
+    }
+    return;
+  }
+}
+
+// Continue the reported count from the cloud value (targetPass/targetCycle) after
+// a reboot/resync. Each driver is raised independently to its own target so that
+// e.g. a cloud cycle that is briefly ahead can never reset the pass count — the
+// cross-contamination that rolled the live piece count backward. After a reboot
+// the local totals are 0, so the targets are above the (zero) live deltas and
+// take effect; during live operation the local deltas are already ahead, so this
+// is a no-op.
 void SessionManager::adjustBaselinesForResume(uint32_t targetPass, uint32_t targetCycle) {
   const ModuleType mt = moduleTypeFromString(_cfg.moduleType);
-  for (auto* d : _drivers) {
-    if (!d) continue;
-    const uint8_t idx = static_cast<uint8_t>(d->id());
-    const DriverId did = d->id();
-    _baseline[idx].used = true;
-    _baseline[idx].value = d->total();  // new work counts from here
-    uint32_t offset = 0;
-    if (mt == ModuleType::OUTPUT_2 && did == DriverId::PRESS) {
-      offset = targetPass;
-    } else if (mt == ModuleType::MOD_INPUT && did == DriverId::FUSION) {
-      offset = targetPass;
-    } else if (mt == ModuleType::MOD_INPUT && did == DriverId::CURRENT) {
-      offset = targetCycle;
-    } else if (mt == ModuleType::OUTPUT_1 && did == DriverId::HORSESHOE) {
-      offset = targetPass;
-    } else if (mt == ModuleType::OUTPUT_1 && did == DriverId::HALL) {
-      offset = targetCycle;
-    }
-    _baseline[idx].offset = offset;
+  if (mt == ModuleType::OUTPUT_2) {
+    raiseBaseline(DriverId::PRESS, targetPass);
+  } else if (mt == ModuleType::MOD_INPUT) {
+    raiseBaseline(DriverId::FUSION, targetPass);
+    raiseBaseline(DriverId::CURRENT, targetCycle);
+  } else if (mt == ModuleType::OUTPUT_1) {
+    raiseBaseline(DriverId::HORSESHOE, targetPass);
+    raiseBaseline(DriverId::HALL, targetCycle);
   }
 }
 
@@ -338,16 +350,19 @@ void SessionManager::syncFromCloud(const char* sessionId, uint32_t cloudPass, ui
     setDeclaredPieces(declared);
   }
 
-  const uint32_t localPass = passCount();
-  const uint32_t localCycle = cycleCount();
-  const bool countsBehind =
-      (cloudPass > localPass) || (cloudCycle > localCycle && cloudCycle > 0);
-
-  if (countsBehind) {
-    adjustBaselinesForResume(cloudPass, cloudCycle);
-    _lastReportedPass = passCount();
-    _lastReportedCycle = cycleCount();
-    Serial.printf("[SESSION] cloud sync pass=%lu cycle=%lu\n", passCount(), cycleCount());
+  // Raise-only: each driver is bumped to the cloud value only if it is behind
+  // (the reboot-recovery case). A stale or lower cloud count — e.g. an UPDATE ack
+  // echoing a value we already passed locally — can never drag the live count
+  // down, and pass/cycle are independent so one can't reset the other.
+  const uint32_t beforePass = passCount();
+  const uint32_t beforeCycle = cycleCount();
+  adjustBaselinesForResume(cloudPass, cloudCycle);
+  const uint32_t afterPass = passCount();
+  const uint32_t afterCycle = cycleCount();
+  if (afterPass != beforePass || afterCycle != beforeCycle) {
+    _lastReportedPass = afterPass;
+    _lastReportedCycle = afterCycle;
+    Serial.printf("[SESSION] cloud sync pass=%lu cycle=%lu\n", afterPass, afterCycle);
   }
 
   if (idChanged) {
