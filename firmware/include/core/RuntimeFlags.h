@@ -8,6 +8,10 @@
 inline std::atomic<bool> gSessionOpen{false};
 inline std::atomic<bool> gOtaActive{false};
 inline std::atomic<bool> gForceOtaCheck{false};
+// True until NetTask finishes the first cloud session resume attempt after boot.
+// Blocks NFC tap-in so a card read cannot open a fresh pass=0 session before
+// OUTPUT/INPUT counts are restored from the cloud row.
+inline std::atomic<bool> gBootSessionGate{true};
 
 // Task handles, published by each task at startup so the heartbeat can report
 // per-task stack headroom (uxTaskGetStackHighWaterMark) for field monitoring.

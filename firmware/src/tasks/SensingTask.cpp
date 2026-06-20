@@ -87,7 +87,8 @@ void sensingLoop(void* param) {
           sessions.setDeclaredPieces(cmd.declaredPieces);
         }
       } else if (cmd.type == CmdType::SESSION_SYNC) {
-        sessions.syncFromCloud(cmd.sessionId, cmd.cloudPass, cmd.cloudCycle, cmd.declaredPieces);
+        sessions.applyCloudSession(cmd.sessionId, cmd.cardUid, cmd.cloudPass, cmd.cloudCycle,
+                                   cmd.declaredPieces, cmd.ppp, cmd.resumeStartEpochMs);
       } else if (cmd.type == CmdType::SESSION_RESUME) {
         sessions.resumeSession(cmd.cardUid, cmd.sessionId, cmd.resumePass, cmd.resumeCycle,
                                cmd.declaredPieces, cmd.ppp, cmd.resumeStartEpochMs);

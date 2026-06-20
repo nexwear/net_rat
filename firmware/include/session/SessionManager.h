@@ -20,6 +20,10 @@ class SessionManager {
   void resumeSession(const char* cardUid, const char* sessionId, uint32_t pass, uint32_t cycle,
                      uint32_t declared, uint32_t ppp, uint64_t startEpochMs);
   void syncFromCloud(const char* sessionId, uint32_t pass, uint32_t cycle, uint32_t declared);
+  /** Resume or re-sync from heartbeat / UPDATE ack (opens session if none local). */
+  void applyCloudSession(const char* sessionId, const char* cardUid, uint32_t pass,
+                         uint32_t cycle, uint32_t declared, uint32_t ppp,
+                         uint64_t startEpochMs = 0);
   void setCloudSessionId(const char* sessionId);
   void abortUnassignedSession();
   bool hasOpenSession() const { return _activeCardUid[0] != '\0'; }
@@ -76,7 +80,7 @@ class SessionManager {
   float _ppp = DEFAULT_PPP;  // pulses-per-piece, calibrated per style+size
 
   static constexpr uint32_t TAP_OUT_WINDOW_MS = 2500;
-  static constexpr uint32_t SESSION_UPDATE_MS = 10000;
+  static constexpr uint32_t SESSION_UPDATE_MS = 60000;  // keepalive only; counts emit on change
   static constexpr uint32_t SESSION_TIMEOUT_MS = 45UL * 60UL * 1000UL;
   static constexpr uint32_t UNASSIGNED_EMIT_MS = 30000;
   static constexpr uint32_t DELTA_EMIT_THRESHOLD = 1;

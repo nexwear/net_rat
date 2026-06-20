@@ -43,9 +43,13 @@ void queueCloudSessionSync(QueueHandle_t commandQ, JsonObjectConst session) {
   Command cmd{};
   cmd.type = CmdType::SESSION_SYNC;
   strncpy(cmd.sessionId, sessionId, sizeof(cmd.sessionId) - 1);
+  const char* cardUid = session["cardUid"] | "";
+  strncpy(cmd.cardUid, cardUid, sizeof(cmd.cardUid) - 1);
   cmd.cloudPass = session["countPass"] | 0;
   cmd.cloudCycle = session["countCycle"] | 0;
   cmd.declaredPieces = session["declaredPieces"] | 0;
+  cmd.ppp = session["ppp"] | 0;
+  cmd.resumeStartEpochMs = session["startTs"] | 0ULL;
   if (xQueueSend(commandQ, &cmd, pdMS_TO_TICKS(200)) != pdTRUE) {
     Serial.println("[NET] cloud session sync queue full");
   }
@@ -320,6 +324,11 @@ void netLoop(void* param) {
         tryResumeActiveSession(ctx->cfg, ctx->commandQ);
         sessionResumeDone = true;
       }
+      gBootSessionGate.store(false);
+    }
+
+    if (gBootSessionGate.load() && (now - bootMs) > 15000) {
+      gBootSessionGate.store(false);
     }
 
     uint8_t drainBudget = 4;
@@ -361,6 +370,14 @@ void netLoop(void* param) {
 
       if (hbResp.length() > 0) {
         applyHeartbeatExtras(ctx->commandQ, hbResp);
+      }
+
+      if (!gSessionOpen.load() && (now - bootMs) < 120000) {
+        static uint32_t lastResumeTryMs = 0;
+        if ((now - lastResumeTryMs) >= 30000) {
+          lastResumeTryMs = now;
+          tryResumeActiveSession(ctx->cfg, ctx->commandQ);
+        }
       }
     }
 

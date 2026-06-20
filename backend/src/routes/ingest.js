@@ -36,6 +36,8 @@ router.post('/heartbeat', deviceAuth, async (req, res) => {
             countPass: active.countPass,
             countCycle: active.countCycle,
             declaredPieces: active.declaredPieces,
+            ppp: active.ppp,
+            startTs: active.startTs,
           }
         : null,
     });
@@ -57,6 +59,7 @@ router.post('/heartbeat', deviceAuth, async (req, res) => {
             countCycle: active.countCycle,
             declaredPieces: active.declaredPieces,
             startTs: active.startTs ? new Date(active.startTs).toISOString() : null,
+            ppp: active.ppp,
           }
         : null,
     };

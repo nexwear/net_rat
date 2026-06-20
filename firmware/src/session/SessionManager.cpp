@@ -143,9 +143,6 @@ void SessionManager::adjustBaselinesForResume(uint32_t targetPass, uint32_t targ
 void SessionManager::resumeSession(const char* cardUid, const char* sessionId, uint32_t pass,
                                    uint32_t cycle, uint32_t declared, uint32_t ppp,
                                    uint64_t startEpochMs) {
-  if (hasOpenSession()) {
-    return;
-  }
   if (moduleTypeFromString(_cfg.moduleType) == ModuleType::ADMIN) {
     return;
   }
@@ -153,6 +150,30 @@ void SessionManager::resumeSession(const char* cardUid, const char* sessionId, u
     return;
   }
 
+  if (hasOpenSession()) {
+    if (strcmp(_activeCardUid, cardUid) != 0) {
+      Serial.println("[SESSION] resume ignored — different card already open");
+      return;
+    }
+    // Same bundle still open locally — re-align baselines from cloud (reboot path).
+    if (declared > 0) {
+      setDeclaredPieces(declared);
+    }
+    if (ppp > 0) {
+      setPpp(ppp);
+    }
+    strncpy(_sessionId, sessionId, sizeof(_sessionId) - 1);
+    _sessionId[sizeof(_sessionId) - 1] = '\0';
+    adjustBaselinesForResume(pass, cycle);
+    _lastReportedPass = passCount();
+    _lastReportedCycle = cycleCount();
+    gSessionOpen.store(true);
+    emit(TelemetryType::SESSION_UPDATE);
+    _lastEmitMs = millis();
+    Serial.printf("[SESSION] re-synced uid=%s pass=%lu cycle=%lu\n", _activeCardUid, passCount(),
+                  cycleCount());
+    return;
+  }
   strncpy(_activeCardUid, cardUid, sizeof(_activeCardUid) - 1);
   _activeCardUid[sizeof(_activeCardUid) - 1] = '\0';
   strncpy(_sessionId, sessionId, sizeof(_sessionId) - 1);
@@ -335,6 +356,19 @@ void SessionManager::syncFromCloud(const char* sessionId, uint32_t cloudPass, ui
   }
 }
 
+void SessionManager::applyCloudSession(const char* sessionId, const char* cardUid,
+                                       uint32_t cloudPass, uint32_t cloudCycle,
+                                       uint32_t declared, uint32_t ppp,
+                                       uint64_t startEpochMs) {
+  if (!hasOpenSession()) {
+    if (cardUid && cardUid[0] && sessionId && sessionId[0]) {
+      resumeSession(cardUid, sessionId, cloudPass, cloudCycle, declared, ppp, startEpochMs);
+    }
+    return;
+  }
+  syncFromCloud(sessionId, cloudPass, cloudCycle, declared);
+}
+
 void SessionManager::abortUnassignedSession() {
   if (!hasOpenSession()) {
     return;
@@ -384,6 +418,11 @@ void SessionManager::onTap(const char* cardUid, ScanKind kindOverride) {
   const uint32_t now = millis();
   const bool admin = moduleTypeFromString(_cfg.moduleType) == ModuleType::ADMIN;
 
+  if (!admin && gBootSessionGate.load()) {
+    Serial.println("[SESSION] tap ignored — waiting for cloud session resume");
+    return;
+  }
+
   if (admin) {
     emit(TelemetryType::SCAN, ScanKind::ASSIGN_SCAN, CloseReason::TIMEOUT, cardUid);
     strncpy(_lastTapUid, cardUid, sizeof(_lastTapUid) - 1);
@@ -424,7 +463,14 @@ void SessionManager::tick() {
 
   if (hasOpenSession()) {
     updateLiveCalibration();
-    if ((now - _lastEmitMs) > SESSION_UPDATE_MS || deltaChangedBy(DELTA_EMIT_THRESHOLD)) {
+    const uint32_t pass = passCount();
+    const uint32_t cycle = cycleCount();
+    const bool countsChanged = (pass != _lastReportedPass) || (cycle != _lastReportedCycle);
+    if (countsChanged || (now - _lastEmitMs) > SESSION_UPDATE_MS) {
+      if (countsChanged) {
+        _lastReportedPass = pass;
+        _lastReportedCycle = cycle;
+      }
       emit(TelemetryType::SESSION_UPDATE);
       _lastEmitMs = now;
     }
