@@ -28,28 +28,11 @@ bool InputPieceFusion::tryCountPiece(uint32_t now, const char* reason) {
 }
 
 void InputPieceFusion::noteIrLift(uint32_t atMs) {
-  // IR alone (no active sewing) never counts a piece.
-  if (_phase != Phase::RUNNING && _phase != Phase::LOW_HOLD) {
-    Serial.println("[FUSION] IR lift ignored — no active sewing");
-    return;
-  }
-  _irLiftsThisCycle++;
-  // IR + current: a lift while sewing is a piece boundary for continuous feeders
-  // whose current never falls to zero between pieces. Same peak/duration gates as a
-  // stop; then start the next piece in place because the motor is still running.
-  const uint32_t duration = _runStartMs > 0 ? atMs - _runStartMs
-                          : (_lowHoldStartMs > 0 ? atMs - _lowHoldStartMs : 0);
-  if (_peakAmps >= MIN_PEAK_A && duration >= MIN_RUN_MS) {
-    if (tryCountPiece(atMs, "ir+current")) {
-      _phase = Phase::RUNNING;
-      _runStartMs = atMs;
-      _lowHoldStartMs = 0;
-      _offSinceMs = 0;
-      _peakAmps = _current ? _current->aux() : 0.0f;
-      _irLiftsThisCycle = 0;
-    }
-  } else {
-    Serial.println("[FUSION] IR lift noted — piece not yet qualified (low peak/short run)");
+  (void)atMs;
+  // IR is logged for reference only (shown as +ir=N on a counted piece). Pieces
+  // are detected from the current burst alone, so IR is not required.
+  if (_phase == Phase::RUNNING || _phase == Phase::LOW_HOLD) {
+    _irLiftsThisCycle++;
   }
 }
 
@@ -105,7 +88,7 @@ void InputPieceFusion::poll() {
         }
         const uint32_t offMs = now - _offSinceMs;
         if (amps < IDLE_MIN_A && offMs >= MIN_OFF_MS) {
-          finishPiece(now, "zero-peak-zero");
+          finishPiece(now, "burst-end");
         } else if (amps >= IDLE_MIN_A && offMs >= MIN_OFF_MS) {
           _phase = Phase::LOW_HOLD;
           _lowHoldStartMs = now;
@@ -130,7 +113,7 @@ void InputPieceFusion::poll() {
         if (_offSinceMs == 0) {
           _offSinceMs = now;
         } else if ((now - _offSinceMs) >= MIN_OFF_MS) {
-          finishPiece(now, "zero-peak-min-zero");
+          finishPiece(now, "burst-end-low");
         }
       } else {
         _offSinceMs = 0;

@@ -4,13 +4,12 @@
 #include "drivers/CurrentDriver.h"
 #include "drivers/HorseshoeIrDriver.h"
 
-// INPUT piece counter — fuses the motor-current envelope with the horseshoe IR.
-// After real sewing (peak >= MIN_PEAK_A held >= MIN_RUN_MS) a piece is counted when:
-//   • the current falls to ~zero (full stop):  zero -> peak -> [min] -> zero, OR
-//   • the horseshoe is lifted while still sewing (IR + current) — for continuous
-//     feeders whose current never drops to zero between pieces.
-// IR alone (a lift with no active sewing) never counts; PIECE_COOLDOWN_MS dedups a
-// stop and a lift that mark the same boundary.
+// INPUT piece counter — current-burst detection (no IR required).
+// The machine is a continuous clutch/servo motor: current idles ~1 A and each
+// piece is a high-current sewing burst (peaks ~10–30 A). One burst = one piece:
+// amps rise above RUN_ON_A, then fall back to the idle band (below IDLE_MIN_A) for
+// MIN_OFF_MS, with peak >= MIN_PEAK_A and run >= MIN_RUN_MS. Horseshoe IR lifts
+// are logged (+ir=N) for reference but do NOT affect the count.
 class InputPieceFusion : public CounterDriver {
  public:
   InputPieceFusion(CurrentDriver* current, HorseshoeIrDriver* horseshoe);
@@ -41,11 +40,14 @@ class InputPieceFusion : public CounterDriver {
   uint8_t _irLiftsThisCycle = 0;
   uint32_t _lastAmpsLogMs = 0;
 
-  static constexpr float RUN_ON_A = 0.75f;
-  static constexpr float RUN_OFF_A = 0.50f;
-  static constexpr float IDLE_MIN_A = 0.28f;
-  static constexpr float MIN_PEAK_A = 0.85f;
-  static constexpr uint32_t MIN_OFF_MS = 100;
+  // Tuned to this machine's signature: idle/between-pieces ~0.7–1.5 A, a sewing
+  // burst peaks ~10–30 A. A piece = one burst; no full stop needed, so IR is not
+  // required. Retune these if a different machine/garment draws differently.
+  static constexpr float RUN_ON_A = 3.0f;    // enter "sewing" (well above idle band)
+  static constexpr float RUN_OFF_A = 2.5f;   // leaving the burst
+  static constexpr float IDLE_MIN_A = 2.0f;  // back in the idle band ⇒ piece ended
+  static constexpr float MIN_PEAK_A = 5.0f;  // a real piece peaks far above idle
+  static constexpr uint32_t MIN_OFF_MS = 250;   // idle band must hold to end a piece
   static constexpr uint32_t MIN_RUN_MS = 120;
   static constexpr uint32_t PIECE_COOLDOWN_MS = 900;
   static constexpr uint32_t LOW_HOLD_MAX_MS = 20000;
