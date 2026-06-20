@@ -1,6 +1,6 @@
 const express = require('express');
 const { query } = require('../db');
-const { approveDevice, ensureCardRegistered, lookupCard } = require('../services/devices');
+const { approveDevice, ensureCardRegistered, lookupCard, clearNodeSessions } = require('../services/devices');
 const { listAlerts, ackAlert } = require('../services/alerts');
 const {
   getAdminReaderStatus,
@@ -110,6 +110,15 @@ router.post('/nodes/:nodeId/reconfig', requirePerm('nodes.config'), async (req, 
   } catch (err) {
     console.error('admin/reconfig error', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/nodes/:nodeId/clear-session', requirePerm('nodes.config'), async (req, res) => {
+  try {
+    const result = await clearNodeSessions(req.params.nodeId);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 

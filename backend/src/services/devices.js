@@ -834,6 +834,24 @@ async function ingestHeartbeat(node, body) {
   return { ok: true, serverTimeMs: Date.now(), pendingOp };
 }
 
+async function clearNodeSessions(nodeId, closeReason = 'TIMEOUT') {
+  const { rows: nodeRows } = await query('SELECT id FROM nodes WHERE id = $1', [nodeId]);
+  if (!nodeRows.length) {
+    const err = new Error('node not found');
+    err.status = 404;
+    throw err;
+  }
+
+  const { rows } = await query(
+    `UPDATE sessions
+        SET end_ts = NOW(), close_reason = $2::close_reason
+      WHERE node_id = $1 AND end_ts IS NULL
+      RETURNING id, card_uid, bundle_id, count_pass, count_cycle`,
+    [nodeId, closeReason]
+  );
+  return { nodeId, closed: rows };
+}
+
 async function getActiveSessionForNode(node) {
   if (node.module_type === 'ADMIN') return null;
 
@@ -887,6 +905,7 @@ module.exports = {
   approveDevice,
   getDeviceConfig,
   getActiveSessionForNode,
+  clearNodeSessions,
   ingestScan,
   ingestSession,
   ingestUnassigned,
