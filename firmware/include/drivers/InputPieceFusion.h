@@ -4,13 +4,13 @@
 #include "drivers/CurrentDriver.h"
 #include "drivers/HorseshoeIrDriver.h"
 
-// INPUT piece counter — current envelope is the primary signal; IR never counts alone.
-//
-// Counted patterns (current only, or current confirmed by IR lift in same window):
-//   • zero → peak → zero
-//   • zero → peak → min (low plateau) → zero
-//   • min → zero after a prior peak (continuation of the same sew cycle)
-// IR lifts are tracked for logging but never increment count without a current run end.
+// INPUT piece counter — fuses the motor-current envelope with the horseshoe IR.
+// After real sewing (peak >= MIN_PEAK_A held >= MIN_RUN_MS) a piece is counted when:
+//   • the current falls to ~zero (full stop):  zero -> peak -> [min] -> zero, OR
+//   • the horseshoe is lifted while still sewing (IR + current) — for continuous
+//     feeders whose current never drops to zero between pieces.
+// IR alone (a lift with no active sewing) never counts; PIECE_COOLDOWN_MS dedups a
+// stop and a lift that mark the same boundary.
 class InputPieceFusion : public CounterDriver {
  public:
   InputPieceFusion(CurrentDriver* current, HorseshoeIrDriver* horseshoe);
@@ -23,7 +23,7 @@ class InputPieceFusion : public CounterDriver {
   enum class Phase : uint8_t { IDLE, RUNNING, LOW_HOLD };
 
   void finishPiece(uint32_t now, const char* reason);
-  void tryCountPiece(uint32_t now, const char* reason);
+  bool tryCountPiece(uint32_t now, const char* reason);  // true if it counted (not in cooldown)
   void noteIrLift(uint32_t atMs);
   void resetCycle();
 
@@ -39,6 +39,7 @@ class InputPieceFusion : public CounterDriver {
   uint32_t _offSinceMs = 0;
   float _peakAmps = 0.0f;
   uint8_t _irLiftsThisCycle = 0;
+  uint32_t _lastAmpsLogMs = 0;
 
   static constexpr float RUN_ON_A = 0.75f;
   static constexpr float RUN_OFF_A = 0.50f;
@@ -48,4 +49,5 @@ class InputPieceFusion : public CounterDriver {
   static constexpr uint32_t MIN_RUN_MS = 120;
   static constexpr uint32_t PIECE_COOLDOWN_MS = 900;
   static constexpr uint32_t LOW_HOLD_MAX_MS = 20000;
+  static constexpr uint32_t AMPS_LOG_MS = 250;  // throttle for the live current log
 };

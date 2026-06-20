@@ -13,9 +13,9 @@ void InputPieceFusion::resetCycle() {
   _irLiftsThisCycle = 0;
 }
 
-void InputPieceFusion::tryCountPiece(uint32_t now, const char* reason) {
+bool InputPieceFusion::tryCountPiece(uint32_t now, const char* reason) {
   if (_lastPieceMs != 0 && (now - _lastPieceMs) < PIECE_COOLDOWN_MS) {
-    return;
+    return false;
   }
   _pieces++;
   _lastPieceMs = now;
@@ -23,13 +23,33 @@ void InputPieceFusion::tryCountPiece(uint32_t now, const char* reason) {
   if (_irLiftsThisCycle > 0) {
     Serial.printf("+ir=%u", _irLiftsThisCycle);
   }
-  Serial.println(")");
+  Serial.printf(") peak=%.2f\n", _peakAmps);
+  return true;
 }
 
 void InputPieceFusion::noteIrLift(uint32_t atMs) {
-  (void)atMs;
-  if (_phase == Phase::RUNNING || _phase == Phase::LOW_HOLD) {
-    _irLiftsThisCycle++;
+  // IR alone (no active sewing) never counts a piece.
+  if (_phase != Phase::RUNNING && _phase != Phase::LOW_HOLD) {
+    Serial.println("[FUSION] IR lift ignored — no active sewing");
+    return;
+  }
+  _irLiftsThisCycle++;
+  // IR + current: a lift while sewing is a piece boundary for continuous feeders
+  // whose current never falls to zero between pieces. Same peak/duration gates as a
+  // stop; then start the next piece in place because the motor is still running.
+  const uint32_t duration = _runStartMs > 0 ? atMs - _runStartMs
+                          : (_lowHoldStartMs > 0 ? atMs - _lowHoldStartMs : 0);
+  if (_peakAmps >= MIN_PEAK_A && duration >= MIN_RUN_MS) {
+    if (tryCountPiece(atMs, "ir+current")) {
+      _phase = Phase::RUNNING;
+      _runStartMs = atMs;
+      _lowHoldStartMs = 0;
+      _offSinceMs = 0;
+      _peakAmps = _current ? _current->aux() : 0.0f;
+      _irLiftsThisCycle = 0;
+    }
+  } else {
+    Serial.println("[FUSION] IR lift noted — piece not yet qualified (low peak/short run)");
   }
 }
 
@@ -49,6 +69,14 @@ void InputPieceFusion::poll() {
 
   const float amps = _current->aux();
   const uint32_t now = millis();
+
+  // Throttled live current log for threshold tuning (skips dead idle to cut spam).
+  if ((now - _lastAmpsLogMs) >= AMPS_LOG_MS && (amps >= 0.05f || _phase != Phase::IDLE)) {
+    _lastAmpsLogMs = now;
+    static const char* const kPhase[] = {"IDLE", "RUN", "LOW"};
+    Serial.printf("[CUR] a=%.2f phase=%s peak=%.2f\n", amps,
+                  kPhase[static_cast<int>(_phase)], _peakAmps);
+  }
 
   uint32_t liftMs = 0;
   while (_ir->consumeLiftEvent(liftMs)) {
