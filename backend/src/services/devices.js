@@ -511,6 +511,26 @@ async function ingestScan(node, body) {
 
 /** Persist counts on the canonical cloud session row (device may send a local UUID). */
 async function upsertOpenSessionCounts({ node, sessionId, bundleId, cardUid, when, pass, cycle }) {
+  const pack = (row) => ({
+    sessionId: row.id,
+    countPass: row.count_pass ?? pass,
+    countCycle: row.count_cycle ?? cycle,
+  });
+
+  // Prefer the cloud session id once the device has synced it from TAP_IN / UPDATE ack.
+  if (sessionId) {
+    const { rows } = await query(
+      `UPDATE sessions
+          SET count_pass = GREATEST(count_pass, $2),
+              count_cycle = GREATEST(count_cycle, $3),
+              node_id = $4
+        WHERE id = $1 AND end_ts IS NULL
+        RETURNING id, count_pass, count_cycle`,
+      [sessionId, pass, cycle, node.id]
+    );
+    if (rows[0]) return pack(rows[0]);
+  }
+
   if (bundleId) {
     const { rows } = await query(
       `INSERT INTO sessions (id, bundle_id, card_uid, module_type, node_id, start_ts, count_pass, count_cycle)
@@ -518,19 +538,13 @@ async function upsertOpenSessionCounts({ node, sessionId, bundleId, cardUid, whe
        ON CONFLICT (bundle_id, module_type) DO UPDATE
        SET count_pass = GREATEST(sessions.count_pass, EXCLUDED.count_pass),
            count_cycle = GREATEST(sessions.count_cycle, EXCLUDED.count_cycle),
-           node_id = EXCLUDED.node_id
+           node_id = EXCLUDED.node_id,
+           card_uid = COALESCE(EXCLUDED.card_uid, sessions.card_uid)
        WHERE sessions.end_ts IS NULL
        RETURNING id, count_pass, count_cycle`,
       [sessionId, bundleId, cardUid, node.module_type, node.id, when, pass, cycle]
     );
-    if (rows[0]) {
-      return {
-        sessionId: rows[0].id,
-        countPass: rows[0].count_pass ?? pass,
-        countCycle: rows[0].count_cycle ?? cycle,
-      };
-    }
-    return { sessionId, countPass: pass, countCycle: cycle };
+    if (rows[0]) return pack(rows[0]);
   }
 
   const { rows } = await query(
@@ -541,18 +555,12 @@ async function upsertOpenSessionCounts({ node, sessionId, bundleId, cardUid, whe
       RETURNING id, count_pass, count_cycle`,
     [node.id, pass, cycle]
   );
-  if (rows[0]) {
-    return {
-      sessionId: rows[0].id,
-      countPass: rows[0].count_pass ?? pass,
-      countCycle: rows[0].count_cycle ?? cycle,
-    };
-  }
+  if (rows[0]) return pack(rows[0]);
 
   await query(
     `INSERT INTO sessions (id, bundle_id, card_uid, module_type, node_id, start_ts, count_pass, count_cycle)
-     VALUES ($1, NULL, $2, $3::module_type, $4, $5, $6, $7)`,
-    [sessionId, cardUid, node.module_type, node.id, when, pass, cycle]
+     VALUES ($1, $2, $3, $4::module_type, $5, $6, $7, $8)`,
+    [sessionId, bundleId || null, cardUid, node.module_type, node.id, when, pass, cycle]
   );
   return { sessionId, countPass: pass, countCycle: cycle };
 }

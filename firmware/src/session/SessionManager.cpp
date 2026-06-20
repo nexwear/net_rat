@@ -287,14 +287,43 @@ void SessionManager::openSession(const char* cardUid, ScanKind kind) {
 }
 
 void SessionManager::setCloudSessionId(const char* sessionId) {
-  if (!sessionId || !sessionId[0] || !hasOpenSession()) {
+  syncFromCloud(sessionId, 0, 0, 0);
+}
+
+void SessionManager::syncFromCloud(const char* sessionId, uint32_t cloudPass, uint32_t cloudCycle,
+                                   uint32_t declared) {
+  if (!hasOpenSession()) {
     return;
   }
-  strncpy(_sessionId, sessionId, sizeof(_sessionId) - 1);
-  _sessionId[sizeof(_sessionId) - 1] = '\0';
-  Serial.printf("[SESSION] cloud session id %s\n", _sessionId);
-  emit(TelemetryType::SESSION_UPDATE);
-  _lastEmitMs = millis();
+
+  bool idChanged = false;
+  if (sessionId && sessionId[0] && strcmp(_sessionId, sessionId) != 0) {
+    strncpy(_sessionId, sessionId, sizeof(_sessionId) - 1);
+    _sessionId[sizeof(_sessionId) - 1] = '\0';
+    idChanged = true;
+    Serial.printf("[SESSION] cloud session id %s\n", _sessionId);
+  }
+
+  if (declared > 0 && _cachedDeclared == 0) {
+    setDeclaredPieces(declared);
+  }
+
+  const uint32_t localPass = passCount();
+  const uint32_t localCycle = cycleCount();
+  const bool countsBehind =
+      (cloudPass > localPass) || (cloudCycle > localCycle && cloudCycle > 0);
+
+  if (countsBehind) {
+    adjustBaselinesForResume(cloudPass, cloudCycle);
+    _lastReportedPass = passCount();
+    _lastReportedCycle = cycleCount();
+    Serial.printf("[SESSION] cloud sync pass=%lu cycle=%lu\n", passCount(), cycleCount());
+  }
+
+  if (idChanged) {
+    emit(TelemetryType::SESSION_UPDATE);
+    _lastEmitMs = millis();
+  }
 }
 
 void SessionManager::abortUnassignedSession() {

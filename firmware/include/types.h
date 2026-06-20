@@ -48,6 +48,8 @@ struct Command {
   char cardUid[24] = "";
   uint32_t resumePass = 0;
   uint32_t resumeCycle = 0;
+  uint32_t cloudPass = 0;
+  uint32_t cloudCycle = 0;
   uint64_t resumeStartEpochMs = 0;
   bool cardAssigned = true;
 };

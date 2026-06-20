@@ -19,6 +19,7 @@ class SessionManager {
   void setPpp(uint32_t ppp);  // pulses-per-piece pushed from server for this bundle
   void resumeSession(const char* cardUid, const char* sessionId, uint32_t pass, uint32_t cycle,
                      uint32_t declared, uint32_t ppp, uint64_t startEpochMs);
+  void syncFromCloud(const char* sessionId, uint32_t pass, uint32_t cycle, uint32_t declared);
   void setCloudSessionId(const char* sessionId);
   void abortUnassignedSession();
   bool hasOpenSession() const { return _activeCardUid[0] != '\0'; }

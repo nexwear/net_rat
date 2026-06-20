@@ -162,7 +162,28 @@ bool TelemetrySender::send(const TelemetryEvent& ev) {
         doc["closeReason"] = closeReasonToString(static_cast<CloseReason>(ev.closeReason));
       }
       serializeJson(doc, body);
-      ok = postJson("/v1/session", body);
+      String resp;
+      ok = postJsonWithResponse("/v1/session", body, resp);
+      if (ok && resp.length() > 0 && _commandQ != nullptr) {
+        JsonDocument respDoc;
+        if (deserializeJson(respDoc, resp) == DeserializationError::Ok) {
+          const char* cloudSessionId = respDoc["sessionId"] | "";
+          if (cloudSessionId[0] != '\0') {
+            Command cmd{};
+            cmd.type = CmdType::SESSION_SYNC;
+            strncpy(cmd.sessionId, cloudSessionId, sizeof(cmd.sessionId) - 1);
+            cmd.cloudPass = respDoc["countPass"] | 0;
+            cmd.cloudCycle = respDoc["countCycle"] | 0;
+            cmd.declaredPieces = respDoc["declaredPieces"] | 0;
+            if (xQueueSend(_commandQ, &cmd, pdMS_TO_TICKS(200)) != pdTRUE) {
+              Serial.println("[NET] session sync queue full");
+            } else {
+              Serial.printf("[NET] session UPDATE ack pass=%lu cycle=%lu\n", cmd.cloudPass,
+                            cmd.cloudCycle);
+            }
+          }
+        }
+      }
       break;
     }
     case TelemetryType::UNASSIGNED: {

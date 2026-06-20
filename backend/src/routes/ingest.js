@@ -25,9 +25,21 @@ async function deviceAuth(req, res, next) {
 router.post('/heartbeat', deviceAuth, async (req, res) => {
   try {
     const result = await ingestHeartbeat(req.node, req.body || {});
-    res.json(result);
-
     const active = await getActiveSessionForNode(req.node);
+    res.json({
+      ...result,
+      session: active
+        ? {
+            sessionId: active.sessionId,
+            bundleId: active.bundleId,
+            cardUid: active.cardUid,
+            countPass: active.countPass,
+            countCycle: active.countCycle,
+            declaredPieces: active.declaredPieces,
+          }
+        : null,
+    });
+
     const payload = {
       nodeId: req.node.id,
       lineId: req.node.line_id,

@@ -32,6 +32,41 @@ bool gOtaReady = false;
 // heartbeats here keep flowing. Far above any legitimate sensing iteration time.
 constexpr uint32_t SENSING_STALL_MS = 60000;
 
+void queueCloudSessionSync(QueueHandle_t commandQ, JsonObjectConst session) {
+  if (!commandQ || session.isNull()) {
+    return;
+  }
+  const char* sessionId = session["sessionId"] | "";
+  if (sessionId[0] == '\0') {
+    return;
+  }
+  Command cmd{};
+  cmd.type = CmdType::SESSION_SYNC;
+  strncpy(cmd.sessionId, sessionId, sizeof(cmd.sessionId) - 1);
+  cmd.cloudPass = session["countPass"] | 0;
+  cmd.cloudCycle = session["countCycle"] | 0;
+  cmd.declaredPieces = session["declaredPieces"] | 0;
+  if (xQueueSend(commandQ, &cmd, pdMS_TO_TICKS(200)) != pdTRUE) {
+    Serial.println("[NET] cloud session sync queue full");
+  }
+}
+
+void applyHeartbeatExtras(QueueHandle_t commandQ, const String& hbResp) {
+  if (hbResp.length() == 0) {
+    return;
+  }
+  JsonDocument hbDoc;
+  if (deserializeJson(hbDoc, hbResp) != DeserializationError::Ok) {
+    return;
+  }
+  if (!hbDoc["pendingOp"].isNull() && hbDoc["pendingOp"].is<JsonObject>()) {
+    RemoteConfig::apply(hbDoc["pendingOp"].as<JsonObjectConst>());
+  }
+  if (!hbDoc["session"].isNull() && hbDoc["session"].is<JsonObject>()) {
+    queueCloudSessionSync(commandQ, hbDoc["session"].as<JsonObjectConst>());
+  }
+}
+
 void setupArduinoOta(const DeviceConfig& cfg) {
   if (gOtaReady) {
     return;
@@ -278,12 +313,7 @@ void netLoop(void* param) {
       Serial.println("[NET] boot heartbeat sent");
 
       if (hbResp.length() > 0) {
-        JsonDocument hbDoc;
-        if (deserializeJson(hbDoc, hbResp) == DeserializationError::Ok) {
-          if (!hbDoc["pendingOp"].isNull() && hbDoc["pendingOp"].is<JsonObject>()) {
-            RemoteConfig::apply(hbDoc["pendingOp"].as<JsonObjectConst>());
-          }
-        }
+        applyHeartbeatExtras(ctx->commandQ, hbResp);
       }
 
       if (!sessionResumeDone) {
@@ -330,12 +360,7 @@ void netLoop(void* param) {
       }
 
       if (hbResp.length() > 0) {
-        JsonDocument hbDoc;
-        if (deserializeJson(hbDoc, hbResp) == DeserializationError::Ok) {
-          if (!hbDoc["pendingOp"].isNull() && hbDoc["pendingOp"].is<JsonObject>()) {
-            RemoteConfig::apply(hbDoc["pendingOp"].as<JsonObjectConst>());
-          }
-        }
+        applyHeartbeatExtras(ctx->commandQ, hbResp);
       }
     }
 
