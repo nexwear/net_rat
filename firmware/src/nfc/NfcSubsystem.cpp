@@ -28,7 +28,11 @@ bool uidAllZero(const uint8_t* uid, size_t len) {
 
 bool pn5180Responding(PN5180ISO14443* nfc) {
   uint8_t productVersion[2] = {};
-  nfc->readEEprom(PRODUCT_VERSION, productVersion, sizeof(productVersion));
+  // readEEprom now returns false on a BUSY timeout (vendored PN5180 patch); a
+  // failed read must not be reported as a healthy reader.
+  if (!nfc->readEEprom(PRODUCT_VERSION, productVersion, sizeof(productVersion))) {
+    return false;
+  }
   return productVersion[1] != 0xFF;
 }
 
